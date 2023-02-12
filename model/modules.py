@@ -131,7 +131,7 @@ class FeedForward(nn.Module):
     Reference: https://github.com/lucidrains/perceiver-pytorch
     """
 
-    def __init__(self, dim, mult=4, dropout=0.0):
+    def __init__(self, dim, mult=2, dropout=0.0):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(dim, dim * mult * 2), GEGLU(), nn.Linear(dim * mult, dim), nn.Dropout(dropout)
@@ -145,7 +145,7 @@ class Attention(nn.Module):
     """
     Reference: https://github.com/lucidrains/perceiver-pytorch
     """
-    
+
     def __init__(self, query_dim, context_dim=None, heads=8, dim_head=64, dropout=0.0):
         super().__init__()
         inner_dim = dim_head * heads

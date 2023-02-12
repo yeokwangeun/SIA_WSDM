@@ -97,18 +97,17 @@ class TrainDataset:
 
 
 class EvalDataset:
-    def __init__(self, inter, item, pop, args, logger, mode):
+    def __init__(self, inter, item_feats, pop, args, logger, mode, eval_mode):
         self.df = copy.deepcopy(inter)
-        self.df["seq"] = [items[:-2] for items in self.df["items"]]
-        self.df["next_item"] = [
-            items[-2] if mode == "val" else items[-1] for items in self.df["items"]
-        ]
+        last_idx = -2 if mode == "val" else -1
+        self.df["seq"] = [items[:last_idx] for items in self.df["items"]]
+        self.df["next_item"] = [items[last_idx] for items in self.df["items"]]
         self.df = self.df[["user_id", "seq", "next_item"]]
-        self.item = item
-        self.n_item_feat = len(self.item)
+        self.item_feats = item_feats
         self.pop = pop
         self.args = args
         self.logger = logger
+        self.eval_mode = eval_mode
 
     def __len__(self):
         return len(self.df)
