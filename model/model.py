@@ -96,42 +96,45 @@ class SIA(nn.Module):
         self.pre_attn = get_latent_attn()
         self.pre_ff = get_ff()
 
-        self.layers = nn.ModuleList([])
-        cross_attn = get_cross_attn()
-        cross_ff = get_ff()
-        self_attns = nn.ModuleList([])
-        for _ in range(attn_self_per_cross):
-            self_attns.append(
-                nn.ModuleList(
-                    [
-                        get_latent_attn(),
-                        get_ff(),
-                    ]
-                )
-            )
-        for _ in range(attn_depth):
-            self.layers.append(nn.ModuleList([cross_attn, cross_ff, self_attns]))
-
-        # for _ in range(attn_depth):
-        #     self_attns = nn.ModuleList([])
-        #     for _ in range(attn_self_per_cross):
-        #         self_attns.append(
-        #             nn.ModuleList(
-        #                 [
-        #                     get_latent_attn(),
-        #                     get_ff(),
-        #                 ]
-        #             )
-        #         )
-        #     self.layers.append(
+        # # Shared Params
+        # self.layers = nn.ModuleList([])
+        # cross_attn = get_cross_attn()
+        # cross_ff = get_ff()
+        # self_attns = nn.ModuleList([])
+        # for _ in range(attn_self_per_cross):
+        #     self_attns.append(
         #         nn.ModuleList(
         #             [
-        #                 get_cross_attn(),
+        #                 get_latent_attn(),
         #                 get_ff(),
-        #                 self_attns,
         #             ]
         #         )
         #     )
+        # for _ in range(attn_depth):
+        #     self.layers.append(nn.ModuleList([cross_attn, cross_ff, self_attns]))
+
+        # Unshared Params
+        self.layers = nn.ModuleList([])
+        for _ in range(attn_depth):
+            self_attns = nn.ModuleList([])
+            for _ in range(attn_self_per_cross):
+                self_attns.append(
+                    nn.ModuleList(
+                        [
+                            get_latent_attn(),
+                            get_ff(),
+                        ]
+                    )
+                )
+            self.layers.append(
+                nn.ModuleList(
+                    [
+                        get_cross_attn(),
+                        get_ff(),
+                        self_attns,
+                    ]
+                )
+            )
         self.to_logits = nn.Sequential(
             Reduce("b n d -> b d", "mean"),
             nn.LayerNorm(latent_dim),
@@ -164,8 +167,8 @@ class SIA(nn.Module):
         mask_self_attn = einsum("b i d, b j d -> b i j", mask_latent, mask_latent) > 0
 
         # Iterative Attention
-        # x = self.pre_attn(x, mask=mask_self_attn) + x
-        # x = self.pre_ff(x) + x
+        x = self.pre_attn(x, mask=mask_self_attn) + x
+        x = self.pre_ff(x) + x
 
         for cross_attn, cross_ff, self_attns in self.layers:
             x = cross_attn(x, context=item_feat, mask=mask_cross_attn) + x

@@ -70,7 +70,8 @@ def main():
     if args.mode == "train":
         logger.info("Train the model")
         model = model.to(args.device)
-        optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+        # optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+        optimizer = optim.SGD(model.parameters(), lr=args.lr, weight_decay=args.weight_decay, momentum=0.9)
         scheduler = WarmupBeforeMultiStepLR(
             optimizer,
             warmup_step=args.lr_warmup_step,
@@ -123,7 +124,7 @@ def parse_arguments():
 
     #################### MODEL ####################
     parser.add_argument("--saved_model_path", type=str, default=None)
-    parser.add_argument("--latent_dim", type=int, default=128)
+    parser.add_argument("--latent_dim", type=int, default=256)
     parser.add_argument("--item_dim_hidden", type=int, default=32)
     parser.add_argument("--item_num_heads", type=int, default=8)
     parser.add_argument("--attn_dim_head", type=int, default=32)
@@ -138,9 +139,9 @@ def parse_arguments():
 
     #################### TRAIN ####################
     parser.add_argument("--num_epochs", type=int, default=50)
-    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--lr_warmup_step", type=int, default=4)
-    parser.add_argument("--lr_milestones", type=list, default=[25, 50])
+    parser.add_argument("--lr_milestones", type=list, default=[20, 25, 30])
     parser.add_argument("--lr_gamma", type=float, default=0.5)
     parser.add_argument("--weight_decay", type=float, default=1e-3)
     parser.add_argument("--early_stop", type=int, default=50)
