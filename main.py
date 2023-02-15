@@ -11,7 +11,7 @@ from datetime import datetime
 
 from dataset import load_data, TrainDataset, EvalDataset
 from dataloader import DataLoaderHandler
-from model import SIA, SimpleModel
+from model import SIA
 from trainer import train, evaluate, WarmupBeforeMultiStepLR
 
 BASEDIR = os.path.dirname(os.path.realpath(__file__))
@@ -20,7 +20,10 @@ BASEDIR = os.path.dirname(os.path.realpath(__file__))
 def main():
     args = parse_arguments()
     args.device = "cuda" if torch.cuda.is_available() else "cpu"
-    logger = get_logger(args.dataset, os.path.join(BASEDIR, args.log_dir))
+    log_time = datetime.strftime(datetime.now(), "%Y%m%d_%H%M%S")
+    log_dir = args.log_dir if args.log_dir else log_time
+    log_dir = os.path.join(BASEDIR, os.path.join(f"log/{args.dataset}", log_dir))
+    logger = get_logger(args.dataset, log_dir)
     logger.info(args)
 
     logger.info("Set Seed")
@@ -72,6 +75,7 @@ def main():
         model = model.to(args.device)
         # optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
         optimizer = optim.SGD(model.parameters(), lr=args.lr, weight_decay=args.weight_decay, momentum=0.9)
+        # optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
         scheduler = WarmupBeforeMultiStepLR(
             optimizer,
             warmup_step=args.lr_warmup_step,
@@ -79,7 +83,7 @@ def main():
             gamma=args.lr_gamma,
         )
         loss_fn = nn.CrossEntropyLoss(ignore_index=0)
-        writer = get_writer(args)
+        writer = get_writer(args, log_dir)
         model = train(
             args.num_epochs,
             args.early_stop,
@@ -114,7 +118,7 @@ def parse_arguments():
     #################### GLOBAL ####################
     parser.add_argument("--mode", type=str, default="train")
     parser.add_argument("--seed", type=int, default=1234)
-    parser.add_argument("--log_dir", type=str, default="log")
+    parser.add_argument("--log_dir", type=str, default=None)
 
     #################### DATA ####################
     parser.add_argument("--dataset", type=str, default="amazon_beauty")
@@ -124,26 +128,26 @@ def parse_arguments():
 
     #################### MODEL ####################
     parser.add_argument("--saved_model_path", type=str, default=None)
-    parser.add_argument("--latent_dim", type=int, default=256)
-    parser.add_argument("--item_dim_hidden", type=int, default=32)
-    parser.add_argument("--item_num_heads", type=int, default=8)
-    parser.add_argument("--attn_dim_head", type=int, default=32)
-    parser.add_argument("--attn_num_heads", type=int, default=8)
+    parser.add_argument("--latent_dim", type=int, default=64)
+    parser.add_argument("--item_dim_hidden", type=int, default=64)
+    parser.add_argument("--item_num_heads", type=int, default=1)
+    parser.add_argument("--attn_dim_head", type=int, default=64)
+    parser.add_argument("--attn_num_heads", type=int, default=1)
 
     parser.add_argument("--item_num_outputs", type=int, default=4)
     parser.add_argument("--item_num_latents", type=int, default=4)
-    parser.add_argument("--attn_depth", type=int, default=10)
-    parser.add_argument("--attn_self_per_cross", type=int, default=4)
-    parser.add_argument("--attn_dropout", type=int, default=0.5)
-    parser.add_argument("--attn_ff_dropout", type=int, default=0.5)
+    parser.add_argument("--attn_depth", type=int, default=1)
+    parser.add_argument("--attn_self_per_cross", type=int, default=6)
+    parser.add_argument("--attn_dropout", type=int, default=0.2)
+    parser.add_argument("--attn_ff_dropout", type=int, default=0.2)
 
     #################### TRAIN ####################
     parser.add_argument("--num_epochs", type=int, default=50)
     parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--lr_warmup_step", type=int, default=4)
-    parser.add_argument("--lr_milestones", type=list, default=[20, 25, 30])
+    parser.add_argument("--lr_warmup_step", type=int, default=None)
+    parser.add_argument("--lr_milestones", type=list, default=None)
     parser.add_argument("--lr_gamma", type=float, default=0.5)
-    parser.add_argument("--weight_decay", type=float, default=1e-3)
+    parser.add_argument("--weight_decay", type=float, default=1e-2)
     parser.add_argument("--early_stop", type=int, default=50)
 
     #################### EVALUATION ####################
@@ -169,9 +173,7 @@ def get_logger(dataset_name, log_dir):
     return logger
 
 
-def get_writer(args):
-    log_time = datetime.strftime(datetime.now(), "%Y%m%d_%H%M%S")
-    log_dir = os.path.join(BASEDIR, f"log_tensorboard/{args.dataset}/{log_time}")
+def get_writer(args, log_dir):
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
     with open(os.path.join(log_dir, "args.txt"), "w") as f:

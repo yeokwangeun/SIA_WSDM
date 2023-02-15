@@ -96,45 +96,45 @@ class SIA(nn.Module):
         self.pre_attn = get_latent_attn()
         self.pre_ff = get_ff()
 
-        # # Shared Params
-        # self.layers = nn.ModuleList([])
-        # cross_attn = get_cross_attn()
-        # cross_ff = get_ff()
-        # self_attns = nn.ModuleList([])
-        # for _ in range(attn_self_per_cross):
-        #     self_attns.append(
-        #         nn.ModuleList(
-        #             [
-        #                 get_latent_attn(),
-        #                 get_ff(),
-        #             ]
-        #         )
-        #     )
-        # for _ in range(attn_depth):
-        #     self.layers.append(nn.ModuleList([cross_attn, cross_ff, self_attns]))
-
-        # Unshared Params
+        # Shared Params
         self.layers = nn.ModuleList([])
-        for _ in range(attn_depth):
-            self_attns = nn.ModuleList([])
-            for _ in range(attn_self_per_cross):
-                self_attns.append(
-                    nn.ModuleList(
-                        [
-                            get_latent_attn(),
-                            get_ff(),
-                        ]
-                    )
-                )
-            self.layers.append(
+        cross_attn = get_cross_attn()
+        cross_ff = get_ff()
+        self_attns = nn.ModuleList([])
+        for _ in range(attn_self_per_cross):
+            self_attns.append(
                 nn.ModuleList(
                     [
-                        get_cross_attn(),
+                        get_latent_attn(),
                         get_ff(),
-                        self_attns,
                     ]
                 )
             )
+        for _ in range(attn_depth):
+            self.layers.append(nn.ModuleList([cross_attn, cross_ff, self_attns]))
+
+        # # Unshared Params
+        # self.layers = nn.ModuleList([])
+        # for _ in range(attn_depth):
+        #     self_attns = nn.ModuleList([])
+        #     for _ in range(attn_self_per_cross):
+        #         self_attns.append(
+        #             nn.ModuleList(
+        #                 [
+        #                     get_latent_attn(),
+        #                     get_ff(),
+        #                 ]
+        #             )
+        #         )
+        #     self.layers.append(
+        #         nn.ModuleList(
+        #             [
+        #                 get_cross_attn(),
+        #                 get_ff(),
+        #                 self_attns,
+        #             ]
+        #         )
+        #     )
         self.to_logits = nn.Sequential(
             Reduce("b n d -> b d", "mean"),
             nn.LayerNorm(latent_dim),
@@ -181,43 +181,6 @@ class SIA(nn.Module):
         # To items
         x = (mask_latent > 0) * x
         return self.to_logits(x)
-
-
-class SimpleModel(nn.Module):
-    def __init__(self, num_items, maxlen, device):
-        super().__init__()
-        self.device = device
-        self.id_embedding = nn.Embedding(
-            num_embeddings=(num_items + 1),
-            embedding_dim=32,
-            padding_idx=0,
-        )
-        self.pos_embedding = nn.Embedding(
-            num_embeddings=(maxlen + 1),
-            embedding_dim=32,
-            padding_idx=0,
-        )
-        self.fc1 = nn.Linear(32, 64)
-        self.relu1 = nn.ReLU()
-        self.fc2 = nn.Linear(64, 64)
-        self.relu2 = nn.ReLU()
-        self.reduce = Reduce("b n d -> b d", "mean")
-        self.fc_out = nn.Linear(64, num_items + 1)
-
-    def forward(self, batch_x):
-        seq_list, pos_list, *item_feat_lists = batch_x
-        mask_latent = repeat(pos_list, "b n -> b n d", d=64).float()
-        mask_latent = mask_latent.to(self.device)
-        id_emb = self.id_embedding(seq_list)
-        pos_emb = self.pos_embedding(pos_list)
-        x = id_emb + pos_emb
-        x = self.fc1(x)
-        x = self.relu1(x)
-        x = self.fc2(x)
-        x = self.relu2(x)
-        x = (mask_latent > 0) * x
-        x = self.reduce(x)
-        return self.fc_out(x)
 
 
 class SetTransformer(nn.Module):
