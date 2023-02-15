@@ -193,8 +193,10 @@ class SetTransformer(nn.Module):
     ):
         super(SetTransformer, self).__init__()
         self.enc = nn.Sequential(
-            ISAB(dim_input, dim_hidden, num_heads, num_inds, ln=ln),
-            ISAB(dim_hidden, dim_hidden, num_heads, num_inds, ln=ln),
+            # ISAB(dim_input, dim_hidden, num_heads, num_inds, ln=ln),
+            # ISAB(dim_hidden, dim_hidden, num_heads, num_inds, ln=ln),
+            SAB(dim_input, dim_hidden, num_heads, ln=ln),
+            SAB(dim_hidden, dim_hidden, num_heads, ln=ln),
         )
         self.dec = nn.Sequential(
             PMA(dim_hidden, num_heads, num_outputs, ln=ln),
