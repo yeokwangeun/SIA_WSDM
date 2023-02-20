@@ -75,10 +75,12 @@ def get_popularity(ratings):
 
 class TrainDataset:
     def __init__(self, inter, item_feats, args, logger):
-        self.df = copy.deepcopy(inter)
-        self.df["seq"] = [items[:-3] for items in self.df["items"]]
-        self.df["next_item"] = [items[-3] for items in self.df["items"]]
-        self.df = self.df[["user_id", "seq", "next_item"]]
+        self.df = pd.DataFrame({"items": [items[:-2] for items in inter["items"]]})
+        if args.sequence_split:
+            self.df = pd.DataFrame({"items": [seq[:i+1] for seq in self.df["items"] for i in range(1, len(seq))]})
+        self.df["seq"] = [items[:-1] for items in self.df["items"]]
+        self.df["next_item"] = [items[-1] for items in self.df["items"]]
+        self.df = self.df[["seq", "next_item"]]
         self.item_feats = item_feats
         self.args = args
         self.logger = logger
@@ -87,8 +89,8 @@ class TrainDataset:
         return len(self.df)
 
     def __getitem__(self, idx):
-        seq = self.df.iloc[idx, 1]
-        next_item = self.df.iloc[idx, 2]
+        seq = self.df.iloc[idx, 0]
+        next_item = self.df.iloc[idx, 1]
         item_feats = []
         for mapper in self.item_feats:
             item_feats.append(np.array([mapper[item_id] for item_id in seq]))
@@ -102,7 +104,7 @@ class EvalDataset:
         last_idx = -2 if mode == "val" else -1
         self.df["seq"] = [items[:last_idx] for items in self.df["items"]]
         self.df["next_item"] = [items[last_idx] for items in self.df["items"]]
-        self.df = self.df[["user_id", "seq", "next_item"]]
+        self.df = self.df[["seq", "next_item"]]
         self.item_feats = item_feats
         self.pop = pop
         self.args = args
@@ -113,8 +115,8 @@ class EvalDataset:
         return len(self.df)
 
     def __getitem__(self, idx):
-        seq = self.df.iloc[idx, 1]
-        next_item = self.df.iloc[idx, 2]
+        seq = self.df.iloc[idx, 0]
+        next_item = self.df.iloc[idx, 1]
         item_feats = []
         for mapper in self.item_feats:
             item_feats.append([mapper[item_id] for item_id in seq])

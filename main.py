@@ -165,6 +165,7 @@ def parse_arguments():
     parser.add_argument("--lr_gamma", type=float, default=0.5)
     parser.add_argument("--weight_decay", type=float, default=1e-2)
     parser.add_argument("--early_stop", type=int, default=50)
+    parser.add_argument("--sequence_split", type=bool, default=False)
 
     #################### EVALUATION ####################
     parser.add_argument("--eval_sample_mode", type=str, default="uni")
