@@ -5,6 +5,7 @@ import torch.nn.functional as F
 
 
 def train(
+    start_epoch,
     num_epochs,
     early_stop,
     train_loader,
@@ -22,7 +23,7 @@ def train(
     best_val = 0.0
     patience = 0
     logger.info(f"Training starts - {num_epochs} epochs")
-    for e in range(num_epochs):
+    for e in range(start_epoch, start_epoch + num_epochs):
         epoch_loss = 0.0
         train_loader = tqdm(train_loader)
         scheduler.step()
@@ -56,7 +57,7 @@ def train(
                 break
     writer.flush()
     writer.close()
-    return model
+    return (model, e)
 
 
 def evaluate(

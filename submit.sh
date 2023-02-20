@@ -13,13 +13,15 @@ conda activate py38
 COMMAND="python main.py \
 --mode=train \
 --dataset=amazon_beauty \
---num_epochs=50 \
---lr=1e-3 \
---latent_dim=64 \
---item_dim_hidden=64 \
+--num_epochs=5 \
+--lr=1e-2 \
+--latent_dim=16 \
+--item_dim_hidden=16 \
 --item_num_heads=1 \
---attn_dim_head=64 \
+--attn_dim_head=16 \
 --attn_num_heads=1 \
---log_dir=dim64_lr1e-3
 "
+if [ ! -z "$1" ]; then
+  COMMAND="$1"
+fi
 srun $COMMAND
