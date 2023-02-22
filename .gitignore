@@ -3,6 +3,6 @@ dataset/raw
 dataset/processed
 *__pycache__*
 saved
-reserve.sh
+reserve*.sh
 reserve.log
 submit.sh

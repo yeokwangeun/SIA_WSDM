@@ -76,8 +76,10 @@ def get_popularity(ratings):
 class TrainDataset:
     def __init__(self, inter, item_feats, args, logger):
         self.df = pd.DataFrame({"items": [items[:-2] for items in inter["items"]]})
-        if args.sequence_split:
-            self.df = pd.DataFrame({"items": [seq[:i+1] for seq in self.df["items"] for i in range(1, len(seq))]})
+        split_point = 2 if args.sequence_split else  args.maxlen
+        self.df = pd.DataFrame({"items": [seq[:i+1] for seq in self.df["items"] for i in range(min(len(seq), split_point) - 1, len(seq))]})
+        self.df["tmp"] = [' '.join([str(item) for item in items]) for items in self.df["items"]]
+        self.df.drop_duplicates(subset=["tmp"], inplace=True)
         self.df["seq"] = [items[:-1] for items in self.df["items"]]
         self.df["next_item"] = [items[-1] for items in self.df["items"]]
         self.df = self.df[["seq", "next_item"]]

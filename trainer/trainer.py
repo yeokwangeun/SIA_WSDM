@@ -1,3 +1,4 @@
+import os
 import torch
 import itertools
 from tqdm import tqdm
@@ -18,6 +19,7 @@ def train(
     loss_fn,
     writer,
     logger,
+    log_dir
 ):
     model.train()
     best_val = 0.0
@@ -55,6 +57,13 @@ def train(
             if patience >= early_stop:
                 logger.info(f"Early stopping at epoch {e}")
                 break
+        save_dict = {
+            'last_epoch': e,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'scheduler_state_dict': scheduler.state_dict()
+        }
+        save_model(log_dir, save_dict)
     writer.flush()
     writer.close()
     return (model, e)
@@ -105,6 +114,15 @@ def calculate_metrics(scores, labels, k_list=[1, 5, 10]):
         metrics_sum[f"NDCG@{k}"] = dcg.sum().item()
 
     return metrics_sum
+
+
+def save_model(save_dir, save_dict):
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    model_save_path = os.path.join(save_dir, "model.pt")
+    chkpoint_save_path = os.path.join(save_dir, "checkpoint.pt")
+    torch.save(save_dict["model_state_dict"], model_save_path)
+    torch.save(save_dict, chkpoint_save_path)
 
 
 class MetricsHandler:

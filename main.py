@@ -107,14 +107,8 @@ def main():
             loss_fn,
             writer,
             logger,
+            log_dir
         )
-        save_dict = {
-            'last_epoch': last_epoch,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'scheduler_state_dict': scheduler.state_dict()
-        }
-        save_model(log_dir, save_dict)
     else:
         if not args.saved_model_path:
             logger.error("For evaluation mode, saved model path must be given.")
@@ -151,7 +145,7 @@ def parse_arguments():
     parser.add_argument("--attn_num_heads", type=int, default=1)
 
     parser.add_argument("--item_num_outputs", type=int, default=4)
-    parser.add_argument("--item_num_latents", type=int, default=4)
+    parser.add_argument("--item_num_latents", type=int, default=16)
     parser.add_argument("--attn_depth", type=int, default=1)
     parser.add_argument("--attn_self_per_cross", type=int, default=6)
     parser.add_argument("--attn_dropout", type=float, default=0.2)
@@ -165,7 +159,7 @@ def parse_arguments():
     parser.add_argument("--lr_gamma", type=float, default=0.5)
     parser.add_argument("--weight_decay", type=float, default=1e-2)
     parser.add_argument("--early_stop", type=int, default=50)
-    parser.add_argument("--sequence_split", type=bool, default=False)
+    parser.add_argument("--sequence_split", type=int, default=1)
 
     #################### EVALUATION ####################
     parser.add_argument("--eval_sample_mode", type=str, default="uni")
@@ -197,15 +191,6 @@ def get_writer(args, log_dir):
         f.writelines([f"{k}: {v}\n" for k, v in vars(args).items()])
     writer = SummaryWriter(log_dir)
     return writer
-
-
-def save_model(save_dir, save_dict):
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
-    model_save_path = os.path.join(save_dir, "model.pt")
-    chkpoint_save_path = os.path.join(save_dir, "checkpoint.pt")
-    torch.save(save_dict["model_state_dict"], model_save_path)
-    torch.save(save_dict, chkpoint_save_path)
 
 
 if __name__ == "__main__":
