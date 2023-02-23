@@ -43,19 +43,22 @@ class SIA(nn.Module):
           - device: Device type.
         """
         super().__init__()
-        self.set_transformers = nn.ModuleList(
+        self.feat_encoders = nn.ModuleList(
             [
-                SetTransformer(
-                    dim_input=feat_dim,
-                    num_outputs=item_num_outputs,
-                    dim_output=latent_dim,
-                    num_inds=item_num_latents,
-                    dim_hidden=item_dim_hidden,
-                    num_heads=item_num_heads,
-                    ln=True,
+                nn.Sequential(
+                    SAB(feat_dim, item_dim_hidden, item_num_heads, ln=True),
+                    SAB(item_dim_hidden, item_dim_hidden, item_num_heads, ln=True),
                 )
                 for feat_dim in dim_item_feats
             ]
+        )
+        self.feats_decoder = nn.Sequential(
+            SAB(item_dim_hidden, item_dim_hidden, item_num_heads, ln=True),
+            SAB(item_dim_hidden, item_dim_hidden, item_num_heads, ln=True),
+            PMA(item_dim_hidden, item_num_heads, item_num_outputs, ln=True),
+            SAB(item_dim_hidden, item_dim_hidden, item_num_heads, ln=True),
+            SAB(item_dim_hidden, item_dim_hidden, item_num_heads, ln=True),
+            nn.Linear(item_dim_hidden, latent_dim)
         )
         self.id_embedding = nn.Embedding(
             num_embeddings=(num_items + 1),
@@ -93,27 +96,7 @@ class SIA(nn.Module):
                 dropout=attn_ff_dropout,
             ),
         )
-        self.pre_attn = get_latent_attn()
-        self.pre_ff = get_ff()
 
-        # # Shared Params
-        # self.layers = nn.ModuleList([])
-        # cross_attn = get_cross_attn()
-        # cross_ff = get_ff()
-        # self_attns = nn.ModuleList([])
-        # for _ in range(attn_self_per_cross):
-        #     self_attns.append(
-        #         nn.ModuleList(
-        #             [
-        #                 get_latent_attn(),
-        #                 get_ff(),
-        #             ]
-        #         )
-        #     )
-        # for _ in range(attn_depth):
-        #     self.layers.append(nn.ModuleList([cross_attn, cross_ff, self_attns]))
-
-        # Unshared Params
         self.layers = nn.ModuleList([])
         for _ in range(attn_depth):
             self_attns = nn.ModuleList([])
@@ -152,11 +135,13 @@ class SIA(nn.Module):
 
         # Item features -> concatenated item features (item_feat)
         item_feat = []
-        for st, item_feat_list in zip(self.set_transformers, item_feat_lists):
-            out = [st(feat.unsqueeze(0)) for feat in item_feat_list]
-            out = torch.cat(out)
-            item_feat.append(out)
-        item_feat = torch.cat(item_feat, dim=1)
+        encoded = []
+        for encoder, item_feat_list in zip(self.feat_encoders, item_feat_lists):
+            encoded.append([encoder(feat.unsqueeze(0)) for feat in item_feat_list]) 
+        for encs in zip(*encoded):
+            encs = torch.cat(encs, axis=1)
+            item_feat.append(self.feats_decoder(encs))
+        item_feat = torch.cat(item_feat)
 
         # Masks for attention
         mask_latent = repeat(pos_list, "b n -> b n d", d=self.latent_dim).float()
@@ -167,9 +152,6 @@ class SIA(nn.Module):
         mask_self_attn = einsum("b i d, b j d -> b i j", mask_latent, mask_latent) > 0
 
         # Iterative Attention
-        # x = self.pre_attn(x, mask=mask_self_attn) + x
-        # x = self.pre_ff(x) + x
-
         for cross_attn, cross_ff, self_attns in self.layers:
             x = cross_attn(x, context=item_feat, mask=mask_cross_attn) + x
             x = cross_ff(x) + x

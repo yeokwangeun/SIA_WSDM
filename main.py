@@ -73,6 +73,7 @@ def main():
         logger.info("Train the model")
         start_epoch = 0
         model = model.to(args.device)
+        logger.info(model)
         # optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
         # optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
         optimizer = optim.SGD(
