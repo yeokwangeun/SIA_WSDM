@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 import random
+import math
 from torch.utils.data import DataLoader
 
 
@@ -10,6 +11,8 @@ class DataLoaderHandler:
         self.maxlen = args.maxlen
         self.batch_size = args.batch_size
         self.device = args.device
+        self.crop_random = args.crop_random
+        self.crop_ratio = args.crop_ratio
         self.logger = logger
         self.dataset = dataset
         self.dataloader = self.load_dataloader(dataset)
@@ -31,6 +34,12 @@ class DataLoaderHandler:
         item_feat_lists = [[] for _ in range(len(self.dataset.item_feats))]
         for seq, next_item, i_feats in sample:
             seqlen = len(seq)
+            if self.mode == "train" and random.random() < self.crop_random:
+                crop_len = math.ceil(seqlen * self.crop_ratio)
+                sidx = random.randint(0, seqlen - crop_len)
+                seq = seq[sidx:sidx+crop_len]
+                i_feats = [i_feat[sidx:sidx+crop_len, :] for i_feat in i_feats]
+                seqlen = crop_len
             pos = [i + 1 for i in range(seqlen)]
             if seqlen >= self.maxlen:
                 seq = seq[-self.maxlen :]

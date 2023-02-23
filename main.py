@@ -136,6 +136,8 @@ def parse_arguments():
     parser.add_argument("--content", type=list, default=["image", "desc"])
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--maxlen", type=int, default=50)
+    parser.add_argument("--crop_random", type=float, default=0.0)
+    parser.add_argument("--crop_ratio", type=float, default=1.0)
 
     #################### MODEL ####################
     parser.add_argument("--saved_model_path", type=str, default=None)
