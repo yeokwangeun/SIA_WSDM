@@ -1,10 +1,8 @@
 import torch
 from torch import nn, einsum
 import torch.nn.functional as F
-import math
 
 from einops import rearrange, repeat
-from einops.layers.torch import Reduce
 
 
 def exists(val):
@@ -13,85 +11,6 @@ def exists(val):
 
 def default(val, d):
     return val if exists(val) else d
-
-
-class MAB(nn.Module):
-    """
-    Reference: https://github.com/juho-lee/set_transformer/blob/master/modules.py
-    """
-
-    def __init__(self, dim_Q, dim_K, dim_V, num_heads, ln=False):
-        super(MAB, self).__init__()
-        self.dim_V = dim_V
-        self.num_heads = num_heads
-        self.fc_q = nn.Linear(dim_Q, dim_V)
-        self.fc_k = nn.Linear(dim_K, dim_V)
-        self.fc_v = nn.Linear(dim_K, dim_V)
-        if ln:
-            self.ln0 = nn.LayerNorm(dim_V)
-            self.ln1 = nn.LayerNorm(dim_V)
-        self.fc_o = nn.Linear(dim_V, dim_V)
-
-    def forward(self, Q, K):
-        Q = self.fc_q(Q)
-        K, V = self.fc_k(K), self.fc_v(K)
-
-        dim_split = self.dim_V // self.num_heads
-        Q_ = torch.cat(Q.split(dim_split, 2), 0)
-        K_ = torch.cat(K.split(dim_split, 2), 0)
-        V_ = torch.cat(V.split(dim_split, 2), 0)
-
-        A = torch.softmax(Q_.bmm(K_.transpose(1, 2)) / math.sqrt(self.dim_V), 2)
-        O = torch.cat((Q_ + A.bmm(V_)).split(Q.size(0), 0), 2)
-        O = O if getattr(self, "ln0", None) is None else self.ln0(O)
-        O = O + F.relu(self.fc_o(O))
-        O = O if getattr(self, "ln1", None) is None else self.ln1(O)
-        return O
-
-
-class SAB(nn.Module):
-    """
-    Reference: https://github.com/juho-lee/set_transformer/blob/master/modules.py
-    """
-
-    def __init__(self, dim_in, dim_out, num_heads, ln=False):
-        super(SAB, self).__init__()
-        self.mab = MAB(dim_in, dim_in, dim_out, num_heads, ln=ln)
-
-    def forward(self, X):
-        return self.mab(X, X)
-
-
-class ISAB(nn.Module):
-    """
-    Reference: https://github.com/juho-lee/set_transformer/blob/master/modules.py
-    """
-
-    def __init__(self, dim_in, dim_out, num_heads, num_inds, ln=False):
-        super(ISAB, self).__init__()
-        self.I = nn.Parameter(torch.Tensor(1, num_inds, dim_out))
-        nn.init.xavier_uniform_(self.I)
-        self.mab0 = MAB(dim_out, dim_in, dim_out, num_heads, ln=ln)
-        self.mab1 = MAB(dim_in, dim_out, dim_out, num_heads, ln=ln)
-
-    def forward(self, X):
-        H = self.mab0(self.I.repeat(X.size(0), 1, 1), X)
-        return self.mab1(X, H)
-
-
-class PMA(nn.Module):
-    """
-    Reference: https://github.com/juho-lee/set_transformer/blob/master/modules.py
-    """
-
-    def __init__(self, dim, num_heads, num_seeds, ln=False):
-        super(PMA, self).__init__()
-        self.S = nn.Parameter(torch.Tensor(1, num_seeds, dim))
-        nn.init.xavier_uniform_(self.S)
-        self.mab = MAB(dim, dim, dim, num_heads, ln=ln)
-
-    def forward(self, X):
-        return self.mab(self.S.repeat(X.size(0), 1, 1), X)
 
 
 class PreNorm(nn.Module):
@@ -184,3 +103,63 @@ class Attention(nn.Module):
         out = einsum("b i j, b j d -> b i d", attn, v)
         out = rearrange(out, "(b h) n d -> b n (h d)", h=h)
         return self.to_out(out)
+
+
+class FeatureTransformer(nn.Module):
+    def __init__(
+        self,
+        feat_dim,
+        out_dim,
+        out_latents,
+        inner_dim=64,
+        heads=1,
+        feat_num_layers=2,
+        out_num_layers=2,
+        attn_dropout=0.0,
+        ff_dropout=0.0,
+    ):
+        super().__init__()
+        get_self_attn = lambda dim: PreNorm(
+            dim, Attention(dim, heads=heads, dim_head=inner_dim, dropout=attn_dropout)
+        )
+        get_ff = lambda dim: PreNorm(dim, FeedForward(dim, dropout=ff_dropout))
+        self.item_attn_layers = nn.ModuleList(
+            [
+                nn.ModuleList([get_self_attn(feat_dim), get_ff(feat_dim)])
+                for _ in range(feat_num_layers)
+            ]
+        )
+        self.cross_attn = PreNorm(
+            out_dim,
+            Attention(query_dim=out_dim, context_dim=feat_dim, dim_head=inner_dim, heads=heads),
+        )
+        self.cross_ff = PreNorm(out_dim, FeedForward(out_dim))
+        self.out_attn_layers = nn.ModuleList(
+            [
+                nn.ModuleList([get_self_attn(out_dim), get_ff(out_dim)])
+                for _ in range(out_num_layers)
+            ]
+        )
+        self.S = nn.Parameter(torch.Tensor(1, out_latents, out_dim))
+        nn.init.xavier_uniform_(self.S)
+
+    def forward(self, item_feat, mask=None):
+        device = item_feat.device
+        out = repeat(self.S, "1 n d -> b n d", b=item_feat.size(0))
+        if exists(mask):
+            mask_item = mask.unsqueeze(2).to(device)
+            mask_item_attn = einsum("b i d, b j d -> b i j", mask_item, mask_item) > 0
+            mask_out = torch.ones((out.shape[0], out.shape[1])).unsqueeze(2).to(device)
+            mask_out_attn = einsum("b i d, b j d -> b i j", mask_out, mask_item) > 0
+        else:
+            mask_item_attn = None
+            mask_out_attn = None
+        for self_attn, ff in self.item_attn_layers:
+            item_feat = self_attn(item_feat, mask=mask_item_attn) + item_feat
+            item_feat = ff(item_feat) + item_feat
+        out = self.cross_attn(out, context=item_feat, mask=mask_out_attn) + out
+        out = self.cross_ff(out) + out
+        for self_attn, ff in self.out_attn_layers:
+            out = self_attn(out, mask=None) + out
+            out = ff(out) + out
+        return out

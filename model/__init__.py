@@ -1,1 +1,1 @@
-from model.model import SetTransformer, SIA
+from model.model import SIA

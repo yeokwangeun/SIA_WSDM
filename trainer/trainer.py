@@ -19,7 +19,7 @@ def train(
     loss_fn,
     writer,
     logger,
-    log_dir
+    log_dir,
 ):
     model.train()
     best_val = 0.0
@@ -58,10 +58,10 @@ def train(
                 logger.info(f"Early stopping at epoch {e}")
                 break
         save_dict = {
-            'last_epoch': e,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'scheduler_state_dict': scheduler.state_dict()
+            "last_epoch": e,
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "scheduler_state_dict": scheduler.state_dict(),
         }
         save_model(log_dir, save_dict)
     writer.flush()

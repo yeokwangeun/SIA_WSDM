@@ -2,13 +2,14 @@ import torch
 from torch import nn, einsum
 from einops import repeat
 from einops.layers.torch import Reduce
-from model.modules import SAB, ISAB, PMA, PreNorm, Attention, FeedForward
+from model.modules import PreNorm, Attention, FeedForward, FeatureTransformer
 
 
 class SIA(nn.Module):
     def __init__(
         self,
         latent_dim,
+        item_dim_output,
         item_num_outputs,
         item_num_heads,
         item_num_latents,
@@ -27,10 +28,11 @@ class SIA(nn.Module):
         """
         Args:
           - latent_dim: Dimension of a latent vector.
-          - item_num_output: Number of outputs of the set transformer per item features.
-          - item_num_heads: Number of heads used for attention operations in set transformer.
-          - item_num_latents: Number of latents used for ISAB in set transformer.
-          - item_dim_hidden: Dimension of hidden vectors for attention operations in set transformer.
+          - item_dim_output: Dimension of outputs of the feature transformers.
+          - item_num_outputs: Number of outputs of the feature transformer per item features.
+          - item_num_heads: Number of heads used for attention operations in feature transformer.
+          - item_num_latents: Number of latents used for ISAB in feature transformer.
+          - item_dim_hidden: Dimension of hidden vectors for attention operations in feature transformer.
           - attn_depth: Depth of the iterative attention.
           - attn_self_per_cross: Number of self attention blocks per cross attention.
           - attn_dropout: Attention dropout in the iterative attention.
@@ -43,22 +45,19 @@ class SIA(nn.Module):
           - device: Device type.
         """
         super().__init__()
-        self.feat_encoders = nn.ModuleList(
+        self.feature_transformers = nn.ModuleList(
             [
-                nn.Sequential(
-                    SAB(feat_dim, item_dim_hidden, item_num_heads, ln=True),
-                    SAB(item_dim_hidden, item_dim_hidden, item_num_heads, ln=True),
+                FeatureTransformer(
+                    feat_dim=feat_dim,
+                    out_dim=item_dim_output,
+                    out_latents=item_num_outputs,
+                    inner_dim=item_dim_hidden,
+                    heads=item_num_heads,
+                    attn_dropout=attn_dropout,
+                    ff_dropout=attn_ff_dropout,
                 )
                 for feat_dim in dim_item_feats
             ]
-        )
-        self.feats_decoder = nn.Sequential(
-            SAB(item_dim_hidden, item_dim_hidden, item_num_heads, ln=True),
-            SAB(item_dim_hidden, item_dim_hidden, item_num_heads, ln=True),
-            PMA(item_dim_hidden, item_num_heads, item_num_outputs, ln=True),
-            SAB(item_dim_hidden, item_dim_hidden, item_num_heads, ln=True),
-            SAB(item_dim_hidden, item_dim_hidden, item_num_heads, ln=True),
-            nn.Linear(item_dim_hidden, latent_dim)
         )
         self.id_embedding = nn.Embedding(
             num_embeddings=(num_items + 1),
@@ -83,7 +82,7 @@ class SIA(nn.Module):
             latent_dim,
             Attention(
                 query_dim=latent_dim,
-                context_dim=latent_dim,
+                context_dim=item_dim_output,
                 heads=attn_num_heads,
                 dim_head=attn_dim_head,
                 dropout=attn_dropout,
@@ -135,19 +134,15 @@ class SIA(nn.Module):
 
         # Item features -> concatenated item features (item_feat)
         item_feat = []
-        encoded = []
-        for encoder, item_feat_list in zip(self.feat_encoders, item_feat_lists):
-            encoded.append([encoder(feat.unsqueeze(0)) for feat in item_feat_list]) 
-        for encs in zip(*encoded):
-            encs = torch.cat(encs, axis=1)
-            item_feat.append(self.feats_decoder(encs))
-        item_feat = torch.cat(item_feat)
+        for item_feat_list, ft in zip(item_feat_lists, self.feature_transformers):
+            item_feat.append(ft(item_feat_list, mask=pos_list))
+        item_feat = torch.cat(item_feat, axis=1)
 
         # Masks for attention
-        mask_latent = repeat(pos_list, "b n -> b n d", d=self.latent_dim).float()
-        mask_items = torch.ones(item_feat.shape)
-        mask_latent = mask_latent.to(self.device)
-        mask_items = mask_items.to(self.device)
+        mask_latent = pos_list.unsqueeze(2).to(self.device)
+        mask_items = (
+            torch.ones((item_feat.shape[0], item_feat.shape[1])).unsqueeze(2).to(self.device)
+        )
         mask_cross_attn = einsum("b i d, b j d -> b i j", mask_latent, mask_items) > 0
         mask_self_attn = einsum("b i d, b j d -> b i j", mask_latent, mask_latent) > 0
 
@@ -163,29 +158,3 @@ class SIA(nn.Module):
         # To items
         x = (mask_latent > 0) * x
         return self.to_logits(x)
-
-
-class SetTransformer(nn.Module):
-    """
-    Reference: https://github.com/juho-lee/set_transformer/blob/master/modules.py
-    """
-
-    def __init__(
-        self, dim_input, num_outputs, dim_output, num_inds=32, dim_hidden=128, num_heads=4, ln=False
-    ):
-        super(SetTransformer, self).__init__()
-        self.enc = nn.Sequential(
-            # ISAB(dim_input, dim_hidden, num_heads, num_inds, ln=ln),
-            # ISAB(dim_hidden, dim_hidden, num_heads, num_inds, ln=ln),
-            SAB(dim_input, dim_hidden, num_heads, ln=ln),
-            SAB(dim_hidden, dim_hidden, num_heads, ln=ln),
-        )
-        self.dec = nn.Sequential(
-            PMA(dim_hidden, num_heads, num_outputs, ln=ln),
-            SAB(dim_hidden, dim_hidden, num_heads, ln=ln),
-            SAB(dim_hidden, dim_hidden, num_heads, ln=ln),
-            nn.Linear(dim_hidden, dim_output),
-        )
-
-    def forward(self, X):
-        return self.dec(self.enc(X))

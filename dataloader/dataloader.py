@@ -37,30 +37,38 @@ class DataLoaderHandler:
             if self.mode == "train" and random.random() < self.crop_random:
                 crop_len = math.ceil(seqlen * self.crop_ratio)
                 sidx = random.randint(0, seqlen - crop_len)
-                seq = seq[sidx:sidx+crop_len]
-                i_feats = [i_feat[sidx:sidx+crop_len, :] for i_feat in i_feats]
+                seq = seq[sidx : sidx + crop_len]
+                i_feats = [i_feat[sidx : sidx + crop_len, :] for i_feat in i_feats]
                 seqlen = crop_len
-            pos = [i + 1 for i in range(seqlen)]
+
+            pos = np.array([i + 1 for i in range(seqlen)])
             if seqlen >= self.maxlen:
                 seq = seq[-self.maxlen :]
                 pos = pos[: self.maxlen]
+                i_feats = [i_feat[-self.maxlen :,] for i_feat in i_feats]
             else:
-                padded = [0] * (self.maxlen - seqlen)
-                seq = padded + seq
-                pos = padded + pos
-            seq_list.append(torch.tensor(seq))
-            pos_list.append(torch.tensor(pos))
-            next_item_list.append(torch.tensor(next_item))
+                padded = np.zeros(self.maxlen - seqlen)
+                padded2d = padded[:, np.newaxis]
+                seq = np.append(padded, np.array(seq))
+                pos = np.append(padded, np.array(pos))
+                i_feats = [
+                    np.concatenate([np.repeat(padded2d, i_feat.shape[1], axis=1), i_feat], axis=0)
+                    for i_feat in i_feats
+                ]
+            seq_list.append(torch.tensor(seq, dtype=torch.long))
+            pos_list.append(torch.tensor(pos, dtype=torch.long))
+            next_item_list.append(torch.tensor(next_item, dtype=torch.long))
             for i, i_feat in enumerate(i_feats):
-                item_feat_lists[i].append(
-                    torch.tensor(np.array(i_feat), dtype=torch.float).to(self.device)
-                )
+                item_feat_lists[i].append(torch.tensor(i_feat, dtype=torch.float))
             if self.mode != "train" and self.dataset.eval_mode != "full":
                 candidate = self.get_candidates(next_item, self.dataset.pop, self.dataset.eval_mode)
                 candidate_list.append(candidate)
         seq_list = torch.stack(seq_list).to(self.device)
         pos_list = torch.stack(pos_list).to(self.device)
         next_item_list = torch.stack(next_item_list).to(self.device)
+        item_feat_lists = [
+            torch.stack(item_feat_list).to(self.device) for item_feat_list in item_feat_lists
+        ]
         candidate_list = torch.stack(candidate_list).to(self.device) if candidate_list else None
         if self.mode == "train":
             return (seq_list, pos_list, next_item_list, *item_feat_lists)

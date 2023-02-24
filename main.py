@@ -53,6 +53,7 @@ def main():
     logger.info("Loading Model")
     model = SIA(
         latent_dim=args.latent_dim,
+        item_dim_output=args.item_dim_output,
         item_num_outputs=args.item_num_outputs,
         item_num_heads=args.item_num_heads,
         item_num_latents=args.item_num_latents,
@@ -75,10 +76,10 @@ def main():
         model = model.to(args.device)
         logger.info(model)
         # optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-        # optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-        optimizer = optim.SGD(
-            model.parameters(), lr=args.lr, weight_decay=args.weight_decay, momentum=0.9
-        )
+        optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+        # optimizer = optim.SGD(
+        #     model.parameters(), lr=args.lr, weight_decay=args.weight_decay, momentum=0.9
+        # )
         scheduler = WarmupBeforeMultiStepLR(
             optimizer,
             warmup_step=args.lr_warmup_step,
@@ -108,7 +109,7 @@ def main():
             loss_fn,
             writer,
             logger,
-            log_dir
+            log_dir,
         )
     else:
         if not args.saved_model_path:
@@ -148,6 +149,7 @@ def parse_arguments():
     parser.add_argument("--attn_num_heads", type=int, default=1)
 
     parser.add_argument("--item_num_outputs", type=int, default=4)
+    parser.add_argument("--item_dim_output", type=int, default=128)
     parser.add_argument("--item_num_latents", type=int, default=16)
     parser.add_argument("--attn_depth", type=int, default=1)
     parser.add_argument("--attn_self_per_cross", type=int, default=6)

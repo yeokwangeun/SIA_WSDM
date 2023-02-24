@@ -76,9 +76,17 @@ def get_popularity(ratings):
 class TrainDataset:
     def __init__(self, inter, item_feats, args, logger):
         self.df = pd.DataFrame({"items": [items[:-2] for items in inter["items"]]})
-        split_point = 2 if args.sequence_split else  args.maxlen
-        self.df = pd.DataFrame({"items": [seq[:i+1] for seq in self.df["items"] for i in range(min(len(seq), split_point) - 1, len(seq))]})
-        self.df["tmp"] = [' '.join([str(item) for item in items]) for items in self.df["items"]]
+        split_point = 2 if args.sequence_split else args.maxlen
+        self.df = pd.DataFrame(
+            {
+                "items": [
+                    seq[: i + 1]
+                    for seq in self.df["items"]
+                    for i in range(min(len(seq), split_point) - 1, len(seq))
+                ]
+            }
+        )
+        self.df["tmp"] = [" ".join([str(item) for item in items]) for items in self.df["items"]]
         self.df.drop_duplicates(subset=["tmp"], inplace=True)
         self.df["seq"] = [items[:-1] for items in self.df["items"]]
         self.df["next_item"] = [items[-1] for items in self.df["items"]]
@@ -91,7 +99,7 @@ class TrainDataset:
         return len(self.df)
 
     def __getitem__(self, idx):
-        seq = self.df.iloc[idx, 0]
+        seq = np.array(self.df.iloc[idx, 0])
         next_item = self.df.iloc[idx, 1]
         item_feats = []
         for mapper in self.item_feats:
@@ -117,10 +125,10 @@ class EvalDataset:
         return len(self.df)
 
     def __getitem__(self, idx):
-        seq = self.df.iloc[idx, 0]
+        seq = np.array(self.df.iloc[idx, 0])
         next_item = self.df.iloc[idx, 1]
         item_feats = []
         for mapper in self.item_feats:
-            item_feats.append([mapper[item_id] for item_id in seq])
+            item_feats.append(np.array([mapper[item_id] for item_id in seq]))
 
         return (seq, next_item, item_feats)
