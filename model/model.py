@@ -120,14 +120,14 @@ class SIA(nn.Module):
         self.to_logits = nn.Sequential(
             Reduce("b n d -> b d", "mean"),
             nn.LayerNorm(latent_dim),
-            nn.Linear(latent_dim, num_items + 1),
+            # nn.Linear(latent_dim, num_items + 1),
         )
         self.latent_dim = latent_dim
         self.device = device
 
     def forward(self, batch_x):
         # ID sequences -> embedded latent vectors (x)
-        seq_list, pos_list, *item_feat_lists = batch_x
+        seq_list, pos_list, item_feat_lists = batch_x
         id_emb = self.id_embedding(seq_list)
         pos_emb = self.pos_embedding(pos_list)
         x = id_emb + pos_emb

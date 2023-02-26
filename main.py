@@ -36,15 +36,16 @@ def main():
     processed_dir = os.path.join(BASEDIR, "dataset/processed")
     inter, item_feats, pop = load_data(args, raw_dir, processed_dir, logger)
     dim_item_feats = [tuple(feat.values())[0].shape[0] for feat in item_feats]
+    args.dim_item_feats = dim_item_feats
     num_items = len(pop)
 
     logger.info("Loading Dataloaders")
-    train_dataset = TrainDataset(inter, item_feats, args, logger)
+    train_dataset = TrainDataset(inter, item_feats, pop, args, logger)
     val_dataset = EvalDataset(
-        inter, item_feats, pop, args, logger, mode="val", eval_mode=args.eval_sample_mode
+        inter, item_feats, pop, args, logger, mode="val", eval_mode=args.eval_sample_mode, n_neg=9,
     )
     test_dataset = EvalDataset(
-        inter, item_feats, pop, args, logger, mode="test", eval_mode=args.eval_sample_mode
+        inter, item_feats, pop, args, logger, mode="test", eval_mode=args.eval_sample_mode, n_neg=99,
     )
     train_loader = DataLoaderHandler("train", train_dataset, args, logger).get_dataloader()
     val_loader = DataLoaderHandler("val", val_dataset, args, logger).get_dataloader()
@@ -93,9 +94,10 @@ def main():
             model.load_state_dict(chkpoint["model_state_dict"])
             optimizer.load_state_dict(chkpoint["optimizer_state_dict"])
             scheduler.load_state_dict(chkpoint["scheduler_state_dict"])
-        loss_fn = nn.CrossEntropyLoss(ignore_index=0)
+        # loss_fn = nn.CrossEntropyLoss(ignore_index=0)
+        loss_fn = nn.BCEWithLogitsLoss()
         writer = get_writer(args, log_dir)
-        model, last_epoch = train(
+        model = train(
             start_epoch,
             args.num_epochs,
             args.early_stop,
@@ -110,6 +112,7 @@ def main():
             writer,
             logger,
             log_dir,
+            args.device
         )
     else:
         if not args.saved_model_path:

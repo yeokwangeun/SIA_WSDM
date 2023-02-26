@@ -3,6 +3,8 @@ import pickle
 import pandas as pd
 import numpy as np
 import copy
+import random
+from tqdm import tqdm
 
 
 def load_data(args, raw_dir, processed_dir, logger):
@@ -74,7 +76,7 @@ def get_popularity(ratings):
 
 
 class TrainDataset:
-    def __init__(self, inter, item_feats, args, logger):
+    def __init__(self, inter, item_feats, pop, args, logger):
         self.df = pd.DataFrame({"items": [items[:-2] for items in inter["items"]]})
         split_point = 2 if args.sequence_split else args.maxlen
         self.df = pd.DataFrame(
@@ -90,10 +92,12 @@ class TrainDataset:
         self.df.drop_duplicates(subset=["tmp"], inplace=True)
         self.df["seq"] = [items[:-1] for items in self.df["items"]]
         self.df["next_item"] = [items[-1] for items in self.df["items"]]
-        self.df = self.df[["seq", "next_item"]]
+        self.df["next_neg"] = [[i for i in random.choices(pop, k=2) if i != item][0] for item in self.df["next_item"]]
+        self.df = self.df[["seq", "next_item", "next_neg"]]
         self.item_feats = item_feats
         self.args = args
         self.logger = logger
+        self.n_neg = 1
 
     def __len__(self):
         return len(self.df)
@@ -101,25 +105,41 @@ class TrainDataset:
     def __getitem__(self, idx):
         seq = np.array(self.df.iloc[idx, 0])
         next_item = self.df.iloc[idx, 1]
+        next_neg = self.df.iloc[idx, 2]
+        pos_seq = np.append(seq, next_item)
+        neg_seq = np.append(seq, next_neg)
+        
         item_feats = []
+        item_feats_pos = []
+        item_feats_neg = []
         for mapper in self.item_feats:
-            item_feats.append(np.array([mapper[item_id] for item_id in seq]))
+            seq_feat = np.array([mapper[item_id] for item_id in seq])
+            pos_feat = np.array(mapper[next_item])
+            pos_seq_feat = np.concatenate([seq_feat, pos_feat.reshape(1, -1)], axis=0)
+            neg_feat = np.array(mapper[next_neg])
+            neg_seq_feat = np.concatenate([seq_feat, neg_feat.reshape(1, -1)], axis=0)
+            item_feats.append(seq_feat)
+            item_feats_pos.append(pos_seq_feat)
+            item_feats_neg.append(neg_seq_feat)
 
-        return (seq, next_item, item_feats)
+        return ((seq, item_feats), (pos_seq, item_feats_pos), (neg_seq, item_feats_neg))
 
 
 class EvalDataset:
-    def __init__(self, inter, item_feats, pop, args, logger, mode, eval_mode):
-        self.df = copy.deepcopy(inter)
-        last_idx = -2 if mode == "val" else -1
-        self.df["seq"] = [items[:last_idx] for items in self.df["items"]]
-        self.df["next_item"] = [items[last_idx] for items in self.df["items"]]
-        self.df = self.df[["seq", "next_item"]]
+    def __init__(self, inter, item_feats, pop, args, logger, mode, eval_mode, n_neg):
         self.item_feats = item_feats
         self.pop = pop
         self.args = args
         self.logger = logger
         self.eval_mode = eval_mode
+        self.n_neg = n_neg
+        self.df = copy.deepcopy(inter)
+        last_idx = -2 if mode == "val" else -1
+        self.df["seq"] = [items[:last_idx] for items in self.df["items"]]
+        self.df["next_item"] = [items[last_idx] for items in self.df["items"]]
+        self.logger.info("Get candidates for evaluation")
+        self.df["next_negs"] = [self.get_candidates(next_item) for next_item in tqdm(self.df["next_item"])]
+        self.df = self.df[["seq", "next_item", "next_negs"]]
 
     def __len__(self):
         return len(self.df)
@@ -127,8 +147,34 @@ class EvalDataset:
     def __getitem__(self, idx):
         seq = np.array(self.df.iloc[idx, 0])
         next_item = self.df.iloc[idx, 1]
-        item_feats = []
-        for mapper in self.item_feats:
-            item_feats.append(np.array([mapper[item_id] for item_id in seq]))
+        next_negs = np.array(self.df.iloc[idx, 2])
+        pos_seq = np.append(seq, next_item)
+        neg_seqs = np.concatenate([np.repeat(seq[np.newaxis, :], self.n_neg, axis=0), next_negs[:, np.newaxis]], axis=1)
 
-        return (seq, next_item, item_feats)
+        item_feats = []
+        item_feats_pos = []
+        item_feats_neg = []
+        for mapper in self.item_feats:
+            seq_feat = np.array([mapper[item_id] for item_id in seq])
+            pos_feat = np.array(mapper[next_item])
+            pos_seq_feat = np.concatenate([seq_feat, pos_feat.reshape(1, -1)], axis=0)
+            neg_feats = np.array([mapper[next_neg] for next_neg in next_negs])
+            neg_seq_feats = np.concatenate([seq_feat[np.newaxis, :, :].repeat(self.n_neg, axis=0), neg_feats[:, np.newaxis, :]], axis=1)
+            item_feats.append(seq_feat)
+            item_feats_pos.append(pos_seq_feat)
+            item_feats_neg.append(neg_seq_feats)
+
+        return ((seq, item_feats), (pos_seq, item_feats_pos), (neg_seqs, item_feats_neg))
+
+    def get_candidates(self, next_item):
+        pool = [item for item in self.pop if item != next_item]
+        if self.eval_mode == "full":
+            candidates = pool
+        elif self.eval_mode == "uni":
+            candidates = random.sample(pool, self.n_neg)
+        elif self.eval_mode == "pop":
+            candidates = pool[:self.n_neg]
+        else:
+            self.logger.error(f"Eval sampling mode in wrong form: {self.eval_mode}")
+            raise Exception
+        return candidates

@@ -2,6 +2,7 @@ import os
 import torch
 import itertools
 from tqdm import tqdm
+from einops import rearrange, repeat
 import torch.nn.functional as F
 
 
@@ -20,6 +21,7 @@ def train(
     writer,
     logger,
     log_dir,
+    device
 ):
     model.train()
     best_val = 0.0
@@ -29,11 +31,16 @@ def train(
         epoch_loss = 0.0
         train_loader = tqdm(train_loader)
         scheduler.step()
-        for seq_list, pos_list, next_item_list, *item_feat_lists in train_loader:
+        for batch_x, batch_y_pos, batch_y_neg in train_loader:
             optimizer.zero_grad()
-            x = (seq_list, pos_list, *item_feat_lists)
-            logits = model(x)
-            loss = loss_fn(logits, next_item_list)
+            x_out = model(batch_x)
+            y_pos_out = model(batch_y_pos)
+            y_neg_out = model(batch_y_neg)
+            pos_score = torch.diag(x_out @ y_pos_out.T)
+            pos_label = torch.ones(pos_score.shape).to(device)
+            neg_score = torch.diag(x_out @ y_neg_out.T)
+            neg_label = torch.zeros(neg_score.shape).to(device)
+            loss = loss_fn(pos_score, pos_label) + loss_fn(neg_score, neg_label)
             loss.backward()
             epoch_loss += loss.item()
             optimizer.step()
@@ -66,7 +73,7 @@ def train(
         save_model(log_dir, save_dict)
     writer.flush()
     writer.close()
-    return (model, e)
+    return model
 
 
 def evaluate(
@@ -81,18 +88,27 @@ def evaluate(
     dataloader = tqdm(dataloader)
     metrics_handler = MetricsHandler(num_users=num_users)
     with torch.no_grad():
-        for seq_list, pos_list, next_item_list, candidate_list, *item_feat_lists in dataloader:
-            x = (seq_list, pos_list, *item_feat_lists)
-            logits = model(x)
-            scores = logits if sample_mode == "full" else logits.gather(1, candidate_list)
+        for batch_x, batch_y_pos, batch_y_negs in dataloader:
+            x_out = model(batch_x)
+            y_pos_out = model(batch_y_pos)
+            seq, pos, i_feats = batch_y_negs
+            batch_size, n_negs, _ = seq.shape
+            seq = rearrange(seq, "b n l -> (b n) l")
+            pos = rearrange(pos, "b n l -> (b n) l")
+            i_feats = [rearrange(i_feat, "b n l d -> (b n) l d") for i_feat in i_feats]
+            y_negs_out = model((seq, pos, i_feats))
+
+            pos_score = torch.diag(x_out @ y_pos_out.T)
+            pos_score = rearrange(pos_score, "(b n) -> b n", b=batch_size)
+            x_out_extended = rearrange(repeat(x_out.unsqueeze(1), "b nn d -> b (nn n) d", n=9), "b n d -> (b n) d")
+            neg_score = torch.diag(x_out_extended @ y_negs_out.T)
+            neg_score = rearrange(neg_score, "(b n) -> b n", b=batch_size)
+            scores = torch.cat([pos_score, neg_score], axis=1)
             scores = scores.detach().cpu()
-            labels = F.one_hot(next_item_list.detach().cpu(), num_classes=(num_items + 1))
-            labels = (
-                labels if sample_mode == "full" else labels.gather(1, candidate_list.detach().cpu())
-            )
+            labels = torch.cat([torch.ones(pos_score.shape), torch.zeros(neg_score.shape)], axis=1)
             metrics = calculate_metrics(scores, labels, k_list=[1, 5, 10])
             if loss_fn:
-                loss = loss_fn(logits, next_item_list)
+                loss = loss_fn(scores, labels)
                 metrics["Loss"] = loss.item()
             metrics_handler.append_metrics(metrics)
     return metrics_handler.get_metrics()
