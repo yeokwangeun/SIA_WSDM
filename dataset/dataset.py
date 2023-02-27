@@ -106,8 +106,6 @@ class TrainDataset:
         seq = np.array(self.df.iloc[idx, 0])
         next_item = self.df.iloc[idx, 1]
         next_neg = self.df.iloc[idx, 2]
-        pos_seq = np.append(seq, next_item)
-        neg_seq = np.append(seq, next_neg)
         
         item_feats = []
         item_feats_pos = []
@@ -115,18 +113,16 @@ class TrainDataset:
         for mapper in self.item_feats:
             seq_feat = np.array([mapper[item_id] for item_id in seq])
             pos_feat = np.array(mapper[next_item])
-            pos_seq_feat = np.concatenate([seq_feat, pos_feat.reshape(1, -1)], axis=0)
             neg_feat = np.array(mapper[next_neg])
-            neg_seq_feat = np.concatenate([seq_feat, neg_feat.reshape(1, -1)], axis=0)
             item_feats.append(seq_feat)
-            item_feats_pos.append(pos_seq_feat)
-            item_feats_neg.append(neg_seq_feat)
+            item_feats_pos.append(pos_feat)
+            item_feats_neg.append(neg_feat)
 
-        return ((seq, item_feats), (pos_seq, item_feats_pos), (neg_seq, item_feats_neg))
+        return ((seq, item_feats), (next_item, item_feats_pos), (next_neg, item_feats_neg))
 
 
 class EvalDataset:
-    def __init__(self, inter, item_feats, pop, args, logger, mode, eval_mode, n_neg):
+    def __init__(self, inter, item_feats, pop, args, logger, mode, eval_mode, n_neg=99):
         self.item_feats = item_feats
         self.pop = pop
         self.args = args
@@ -148,8 +144,6 @@ class EvalDataset:
         seq = np.array(self.df.iloc[idx, 0])
         next_item = self.df.iloc[idx, 1]
         next_negs = np.array(self.df.iloc[idx, 2])
-        pos_seq = np.append(seq, next_item)
-        neg_seqs = np.concatenate([np.repeat(seq[np.newaxis, :], self.n_neg, axis=0), next_negs[:, np.newaxis]], axis=1)
 
         item_feats = []
         item_feats_pos = []
@@ -157,17 +151,16 @@ class EvalDataset:
         for mapper in self.item_feats:
             seq_feat = np.array([mapper[item_id] for item_id in seq])
             pos_feat = np.array(mapper[next_item])
-            pos_seq_feat = np.concatenate([seq_feat, pos_feat.reshape(1, -1)], axis=0)
             neg_feats = np.array([mapper[next_neg] for next_neg in next_negs])
-            neg_seq_feats = np.concatenate([seq_feat[np.newaxis, :, :].repeat(self.n_neg, axis=0), neg_feats[:, np.newaxis, :]], axis=1)
             item_feats.append(seq_feat)
-            item_feats_pos.append(pos_seq_feat)
-            item_feats_neg.append(neg_seq_feats)
+            item_feats_pos.append(pos_feat)
+            item_feats_neg.append(neg_feats)
 
-        return ((seq, item_feats), (pos_seq, item_feats_pos), (neg_seqs, item_feats_neg))
+        return ((seq, item_feats), (next_item, item_feats_pos), (next_negs, item_feats_neg))
 
     def get_candidates(self, next_item):
-        pool = [item for item in self.pop if item != next_item]
+        pool = list(self.pop)
+        pool.remove(next_item)
         if self.eval_mode == "full":
             candidates = pool
         elif self.eval_mode == "uni":

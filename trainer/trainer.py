@@ -15,8 +15,11 @@ def train(
     eval_sample_mode,
     num_items,
     model,
-    optimizer,
-    scheduler,
+    item_model,
+    seq_optimizer,
+    item_optimizer,
+    seq_scheduler,
+    item_scheduler,
     loss_fn,
     writer,
     logger,
@@ -24,18 +27,21 @@ def train(
     device
 ):
     model.train()
+    item_model.train()
     best_val = 0.0
     patience = 0
     logger.info(f"Training starts - {num_epochs} epochs")
     for e in range(start_epoch, start_epoch + num_epochs):
         epoch_loss = 0.0
         train_loader = tqdm(train_loader)
-        scheduler.step()
+        seq_scheduler.step()
+        item_scheduler.step()
         for batch_x, batch_y_pos, batch_y_neg in train_loader:
-            optimizer.zero_grad()
+            seq_optimizer.zero_grad()
+            item_optimizer.zero_grad()
             x_out = model(batch_x)
-            y_pos_out = model(batch_y_pos)
-            y_neg_out = model(batch_y_neg)
+            y_pos_out = item_model(batch_y_pos)
+            y_neg_out = item_model(batch_y_neg)
             pos_score = torch.diag(x_out @ y_pos_out.T)
             pos_label = torch.ones(pos_score.shape).to(device)
             neg_score = torch.diag(x_out @ y_neg_out.T)
@@ -43,13 +49,14 @@ def train(
             loss = loss_fn(pos_score, pos_label) + loss_fn(neg_score, neg_label)
             loss.backward()
             epoch_loss += loss.item()
-            optimizer.step()
+            seq_optimizer.step()
+            item_optimizer.step()
             train_loader.set_description(f"Epoch {e} - loss: {loss.item():.4f}")
-        current_lr = optimizer.param_groups[0]["lr"]
+        current_lr = seq_optimizer.param_groups[0]["lr"]
         logger.info(f"Epoch {e} - lr: {current_lr}, loss: {epoch_loss}")
         writer.add_scalar("Loss/train", epoch_loss, e)
         writer.add_scalar("LR", current_lr, e)
-        val_metrics = evaluate(model, val_loader, eval_sample_mode, num_items, loss_fn=loss_fn)
+        val_metrics = evaluate(model, item_model, val_loader, eval_sample_mode, num_items, loss_fn=loss_fn)
         val_log = ""
         for k, v in val_metrics.items():
             writer.add_scalar(f"{k}/valid", v, e)
@@ -67,8 +74,10 @@ def train(
         save_dict = {
             "last_epoch": e,
             "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "scheduler_state_dict": scheduler.state_dict(),
+            "seq_optimizer_state_dict": seq_optimizer.state_dict(),
+            "item_optimizer_state_dict": item_optimizer.state_dict(),
+            "seq_scheduler_state_dict": seq_scheduler.state_dict(),
+            "item_scheduler_state_dict": item_scheduler.state_dict(),
         }
         save_model(log_dir, save_dict)
     writer.flush()
@@ -78,29 +87,30 @@ def train(
 
 def evaluate(
     model,
+    item_model,
     dataloader,
     sample_mode,
     num_items,
     loss_fn=None,
 ):
     model.eval()
+    item_model.eval()
     num_users = len(dataloader.dataset)
     dataloader = tqdm(dataloader)
     metrics_handler = MetricsHandler(num_users=num_users)
     with torch.no_grad():
         for batch_x, batch_y_pos, batch_y_negs in dataloader:
             x_out = model(batch_x)
-            y_pos_out = model(batch_y_pos)
-            seq, pos, i_feats = batch_y_negs
-            batch_size, n_negs, _ = seq.shape
-            seq = rearrange(seq, "b n l -> (b n) l")
-            pos = rearrange(pos, "b n l -> (b n) l")
-            i_feats = [rearrange(i_feat, "b n l d -> (b n) l d") for i_feat in i_feats]
-            y_negs_out = model((seq, pos, i_feats))
+            y_pos_out = item_model(batch_y_pos)
+            items, i_feats = batch_y_negs
+            batch_size, n_negs = items.shape
+            items = rearrange(items, "b n -> (b n)")
+            i_feats = [rearrange(i_feat, "b n d -> (b n) d") for i_feat in i_feats]
+            y_negs_out = item_model((items, i_feats))
 
             pos_score = torch.diag(x_out @ y_pos_out.T)
             pos_score = rearrange(pos_score, "(b n) -> b n", b=batch_size)
-            x_out_extended = rearrange(repeat(x_out.unsqueeze(1), "b nn d -> b (nn n) d", n=9), "b n d -> (b n) d")
+            x_out_extended = rearrange(repeat(x_out.unsqueeze(1), "b 1 d -> b n d", n=n_negs), "b n d -> (b n) d")
             neg_score = torch.diag(x_out_extended @ y_negs_out.T)
             neg_score = rearrange(neg_score, "(b n) -> b n", b=batch_size)
             scores = torch.cat([pos_score, neg_score], axis=1)

@@ -11,7 +11,7 @@ from datetime import datetime
 
 from dataset import load_data, TrainDataset, EvalDataset
 from dataloader import DataLoaderHandler
-from model import SIA
+from model import SIA, ItemTransformer
 from trainer import train, evaluate, WarmupBeforeMultiStepLR
 
 BASEDIR = os.path.dirname(os.path.realpath(__file__))
@@ -42,10 +42,10 @@ def main():
     logger.info("Loading Dataloaders")
     train_dataset = TrainDataset(inter, item_feats, pop, args, logger)
     val_dataset = EvalDataset(
-        inter, item_feats, pop, args, logger, mode="val", eval_mode=args.eval_sample_mode, n_neg=9,
+        inter, item_feats, pop, args, logger, mode="val", eval_mode=args.eval_sample_mode,
     )
     test_dataset = EvalDataset(
-        inter, item_feats, pop, args, logger, mode="test", eval_mode=args.eval_sample_mode, n_neg=99,
+        inter, item_feats, pop, args, logger, mode="test", eval_mode=args.eval_sample_mode,
     )
     train_loader = DataLoaderHandler("train", train_dataset, args, logger).get_dataloader()
     val_loader = DataLoaderHandler("val", val_dataset, args, logger).get_dataloader()
@@ -58,7 +58,7 @@ def main():
         item_num_outputs=args.item_num_outputs,
         item_num_heads=args.item_num_heads,
         item_num_latents=args.item_num_latents,
-        item_dim_hidden=args.item_dim_hidden * args.item_num_heads,
+        item_dim_hidden=args.item_dim_hidden,
         attn_depth=args.attn_depth,
         attn_self_per_cross=args.attn_self_per_cross,
         attn_dropout=args.attn_dropout,
@@ -70,19 +70,29 @@ def main():
         maxlen=args.maxlen,
         device=args.device,
     )
+    item_model = ItemTransformer(
+        dim_item_feats=dim_item_feats,
+        out_dim=args.latent_dim,
+        dim_head=args.item_dim_hidden,
+        heads=args.item_num_heads,
+    )
 
     if args.mode == "train":
         logger.info("Train the model")
         start_epoch = 0
         model = model.to(args.device)
+        item_model = item_model.to(args.device)
         logger.info(model)
-        # optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-        optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-        # optimizer = optim.SGD(
-        #     model.parameters(), lr=args.lr, weight_decay=args.weight_decay, momentum=0.9
-        # )
-        scheduler = WarmupBeforeMultiStepLR(
-            optimizer,
+        seq_optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+        item_optimizer = optim.AdamW(item_model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+        seq_scheduler = WarmupBeforeMultiStepLR(
+            seq_optimizer,
+            warmup_step=args.lr_warmup_step,
+            milestones=args.lr_milestones,
+            gamma=args.lr_gamma,
+        )
+        item_scheduler = WarmupBeforeMultiStepLR(
+            item_optimizer,
             warmup_step=args.lr_warmup_step,
             milestones=args.lr_milestones,
             gamma=args.lr_gamma,
@@ -92,9 +102,10 @@ def main():
             chkpoint = torch.load(chkpoint_path)
             start_epoch = chkpoint["last_epoch"] + 1
             model.load_state_dict(chkpoint["model_state_dict"])
-            optimizer.load_state_dict(chkpoint["optimizer_state_dict"])
-            scheduler.load_state_dict(chkpoint["scheduler_state_dict"])
-        # loss_fn = nn.CrossEntropyLoss(ignore_index=0)
+            seq_optimizer.load_state_dict(chkpoint["seq_optimizer_state_dict"])
+            item_optimizer.load_state_dict(chkpoint["item_optimizer_state_dict"])
+            seq_scheduler.load_state_dict(chkpoint["seq_scheduler_state_dict"])
+            item_scheduler.load_state_dict(chkpoint["item_scheduler_state_dict"])
         loss_fn = nn.BCEWithLogitsLoss()
         writer = get_writer(args, log_dir)
         model = train(
@@ -106,8 +117,11 @@ def main():
             args.eval_sample_mode,
             num_items,
             model,
-            optimizer,
-            scheduler,
+            item_model,
+            seq_optimizer,
+            item_optimizer,            
+            seq_scheduler,
+            item_scheduler,
             loss_fn,
             writer,
             logger,
@@ -121,7 +135,7 @@ def main():
         model.load_state_dict(torch.load(args.saved_model_path))
 
     logger.info("Evaluation starts")
-    test_metrics = evaluate(model, test_loader, args.eval_sample_mode, num_items)
+    test_metrics = evaluate(model, item_model, test_loader, args.eval_sample_mode, num_items)
     test_log = ""
     for k, v in test_metrics.items():
         test_log += f"{k}: {v:.5f} "

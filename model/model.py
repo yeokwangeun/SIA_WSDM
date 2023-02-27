@@ -158,3 +158,43 @@ class SIA(nn.Module):
         # To items
         x = (mask_latent > 0) * x
         return self.to_logits(x)
+
+
+class ItemTransformer(nn.Module):
+    def __init__(
+        self,
+        dim_item_feats,
+        out_dim,
+        id_embedding=None,
+        dim_head=64,
+        heads=2,
+    ):
+        super().__init__()
+        inner_dim = dim_head * heads
+        self.scale = dim_head**-0.5
+        self.s = nn.Parameter(torch.Tensor(1, out_dim))
+        nn.init.xavier_uniform_(self.s)
+        self.id_embedding = id_embedding
+
+        self.ln0 = nn.LayerNorm(out_dim)
+        self.ln1 = nn.LayerNorm(out_dim)
+        self.to_q = nn.Linear(out_dim, inner_dim, bias=False)
+        self.to_k = nn.ModuleList([nn.Linear(dim, inner_dim, bias=False) for dim in dim_item_feats])
+        self.to_v = nn.ModuleList([nn.Linear(dim, inner_dim, bias=False) for dim in dim_item_feats])
+        self.to_out = nn.Linear(inner_dim, out_dim)
+        self.ff = FeedForward(out_dim)
+
+    def forward(self, item_info):
+        item, i_feats = item_info
+        batch_size = item.shape[0]
+        latent = repeat(self.s, "1 d -> b 1 d", b=batch_size)
+        q = self.to_q(latent)
+        k = torch.stack([fn(k_in) for fn, k_in in zip(self.to_k, i_feats)], axis=1)
+        v = torch.stack([fn(v_in) for fn, v_in in zip(self.to_v, i_feats)], axis=1)
+
+        sim = einsum("b i d, b j d -> b i j", q, k) * self.scale
+        attn = sim.softmax(dim=-1)
+        out = einsum("b i j, b j d -> b i d", attn, v)
+        out = self.ln0(self.to_out(out)) + latent
+        out = self.ln1(self.ff(out)) + out
+        return out.squeeze(1)        
