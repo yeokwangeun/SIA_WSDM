@@ -75,6 +75,7 @@ def main():
         out_dim=args.latent_dim,
         dim_head=args.item_dim_hidden,
         heads=args.item_num_heads,
+        id_embedding=model.id_embedding,
     )
 
     if args.mode == "train":
@@ -85,6 +86,8 @@ def main():
         logger.info(model)
         seq_optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
         item_optimizer = optim.AdamW(item_model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+        # seq_optimizer = optim.SGD(model.parameters(), lr=args.lr, weight_decay=args.weight_decay, momentum=0.9)
+        # item_optimizer = optim.SGD(item_model.parameters(), lr=args.lr, weight_decay=args.weight_decay, momentum=0.9)
         seq_scheduler = WarmupBeforeMultiStepLR(
             seq_optimizer,
             warmup_step=args.lr_warmup_step,

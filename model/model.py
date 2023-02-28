@@ -184,10 +184,14 @@ class ItemTransformer(nn.Module):
         self.to_out = nn.Linear(inner_dim, out_dim)
         self.ff = FeedForward(out_dim)
 
-    def forward(self, item_info):
+    def forward(self, item_info, id_embedding=None):
         item, i_feats = item_info
         batch_size = item.shape[0]
-        latent = repeat(self.s, "1 d -> b 1 d", b=batch_size)
+        if self.id_embedding:
+            latent = self.id_embedding(item)
+            latent = latent.unsqueeze(1)
+        else:
+            latent = repeat(self.s, "1 d -> b 1 d", b=batch_size)
         q = self.to_q(latent)
         k = torch.stack([fn(k_in) for fn, k_in in zip(self.to_k, i_feats)], axis=1)
         v = torch.stack([fn(v_in) for fn, v_in in zip(self.to_v, i_feats)], axis=1)
