@@ -11,7 +11,7 @@ from datetime import datetime
 
 from dataset import load_data, TrainDataset, EvalDataset
 from dataloader import DataLoaderHandler
-from model import SIA, ItemTransformer
+from model import SIA
 from trainer import train, evaluate, WarmupBeforeMultiStepLR
 
 BASEDIR = os.path.dirname(os.path.realpath(__file__))
@@ -54,48 +54,28 @@ def main():
     logger.info("Loading Model")
     model = SIA(
         latent_dim=args.latent_dim,
-        item_dim_output=args.item_dim_output,
-        item_num_outputs=args.item_num_outputs,
-        item_num_heads=args.item_num_heads,
-        item_num_latents=args.item_num_latents,
-        item_dim_hidden=args.item_dim_hidden,
+        feature_dim=args.feature_dim,
+        attn_num_heads=args.attn_num_heads,
+        attn_dim_head=args.attn_dim_head,
         attn_depth=args.attn_depth,
         attn_self_per_cross=args.attn_self_per_cross,
         attn_dropout=args.attn_dropout,
         attn_ff_dropout=args.attn_ff_dropout,
-        attn_num_heads=args.attn_num_heads,
-        attn_dim_head=args.attn_dim_head,
         dim_item_feats=dim_item_feats,
         num_items=num_items,
         maxlen=args.maxlen,
         device=args.device,
-    )
-    item_model = ItemTransformer(
-        dim_item_feats=dim_item_feats,
-        out_dim=args.latent_dim,
-        dim_head=args.item_dim_hidden,
-        heads=args.item_num_heads,
-        id_embedding=model.id_embedding,
     )
 
     if args.mode == "train":
         logger.info("Train the model")
         start_epoch = 0
         model = model.to(args.device)
-        item_model = item_model.to(args.device)
         logger.info(model)
-        seq_optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-        item_optimizer = optim.AdamW(item_model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-        # seq_optimizer = optim.SGD(model.parameters(), lr=args.lr, weight_decay=args.weight_decay, momentum=0.9)
-        # item_optimizer = optim.SGD(item_model.parameters(), lr=args.lr, weight_decay=args.weight_decay, momentum=0.9)
-        seq_scheduler = WarmupBeforeMultiStepLR(
-            seq_optimizer,
-            warmup_step=args.lr_warmup_step,
-            milestones=args.lr_milestones,
-            gamma=args.lr_gamma,
-        )
-        item_scheduler = WarmupBeforeMultiStepLR(
-            item_optimizer,
+        optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+        # optimizer = optim.SGD(model.parameters(), lr=args.lr, weight_decay=args.weight_decay, momentum=0.9)
+        scheduler = WarmupBeforeMultiStepLR(
+            optimizer,
             warmup_step=args.lr_warmup_step,
             milestones=args.lr_milestones,
             gamma=args.lr_gamma,
@@ -105,10 +85,8 @@ def main():
             chkpoint = torch.load(chkpoint_path)
             start_epoch = chkpoint["last_epoch"] + 1
             model.load_state_dict(chkpoint["model_state_dict"])
-            seq_optimizer.load_state_dict(chkpoint["seq_optimizer_state_dict"])
-            item_optimizer.load_state_dict(chkpoint["item_optimizer_state_dict"])
-            seq_scheduler.load_state_dict(chkpoint["seq_scheduler_state_dict"])
-            item_scheduler.load_state_dict(chkpoint["item_scheduler_state_dict"])
+            optimizer.load_state_dict(chkpoint["optimizer_state_dict"])
+            scheduler.load_state_dict(chkpoint["scheduler_state_dict"])
         loss_fn = nn.BCEWithLogitsLoss()
         writer = get_writer(args, log_dir)
         model = train(
@@ -117,14 +95,9 @@ def main():
             args.early_stop,
             train_loader,
             val_loader,
-            args.eval_sample_mode,
-            num_items,
             model,
-            item_model,
-            seq_optimizer,
-            item_optimizer,            
-            seq_scheduler,
-            item_scheduler,
+            optimizer,
+            scheduler,
             loss_fn,
             writer,
             logger,
@@ -138,7 +111,7 @@ def main():
         model.load_state_dict(torch.load(args.saved_model_path))
 
     logger.info("Evaluation starts")
-    test_metrics = evaluate(model, item_model, test_loader, args.eval_sample_mode, num_items)
+    test_metrics = evaluate(model, test_loader)
     test_log = ""
     for k, v in test_metrics.items():
         test_log += f"{k}: {v:.5f} "
@@ -163,14 +136,9 @@ def parse_arguments():
     #################### MODEL ####################
     parser.add_argument("--saved_model_path", type=str, default=None)
     parser.add_argument("--latent_dim", type=int, default=64)
-    parser.add_argument("--item_dim_hidden", type=int, default=64)
-    parser.add_argument("--item_num_heads", type=int, default=1)
+    parser.add_argument("--feature_dim", type=int, default=64)
     parser.add_argument("--attn_dim_head", type=int, default=64)
     parser.add_argument("--attn_num_heads", type=int, default=1)
-
-    parser.add_argument("--item_num_outputs", type=int, default=4)
-    parser.add_argument("--item_dim_output", type=int, default=128)
-    parser.add_argument("--item_num_latents", type=int, default=16)
     parser.add_argument("--attn_depth", type=int, default=1)
     parser.add_argument("--attn_self_per_cross", type=int, default=6)
     parser.add_argument("--attn_dropout", type=float, default=0.2)

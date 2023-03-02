@@ -1,1 +1,1 @@
-from model.model import SIA, ItemTransformer
+from model.model import SIA

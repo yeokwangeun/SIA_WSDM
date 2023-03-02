@@ -1,25 +1,20 @@
 import torch
 from torch import nn, einsum
-from einops import repeat
 from einops.layers.torch import Reduce
-from model.modules import PreNorm, Attention, FeedForward, FeatureTransformer
+from model.modules import PreNorm, Attention, FeedForward
 
 
 class SIA(nn.Module):
     def __init__(
         self,
         latent_dim,
-        item_dim_output,
-        item_num_outputs,
-        item_num_heads,
-        item_num_latents,
-        item_dim_hidden,
+        feature_dim,
+        attn_num_heads,
+        attn_dim_head,
         attn_depth,
         attn_self_per_cross,
         attn_dropout,
         attn_ff_dropout,
-        attn_num_heads,
-        attn_dim_head,
         dim_item_feats,
         num_items,
         maxlen,
@@ -28,37 +23,19 @@ class SIA(nn.Module):
         """
         Args:
           - latent_dim: Dimension of a latent vector.
-          - item_dim_output: Dimension of outputs of the feature transformers.
-          - item_num_outputs: Number of outputs of the feature transformer per item features.
-          - item_num_heads: Number of heads used for attention operations in feature transformer.
-          - item_num_latents: Number of latents used for ISAB in feature transformer.
-          - item_dim_hidden: Dimension of hidden vectors for attention operations in feature transformer.
+          - feature_dim: Dimension of features.
+          - attn_num_heads: Number of heads for attention operation in the iterative attention.
+          - attn_dim_head: Dimension for attention operation in the iterative attention.
           - attn_depth: Depth of the iterative attention.
           - attn_self_per_cross: Number of self attention blocks per cross attention.
           - attn_dropout: Attention dropout in the iterative attention.
           - attn_ff_dropout: Feedforward dropout in the iterative attention.
-          - attn_num_heads: Number of heads for attention operation in the iterative attention.
-          - attn_dim_head: Dimension for attention operation in the iterative attention.
           - dim_item_feats: List of dimensions for item features.
           - num_items: Number of all items in the dataset.
           - maxlen: Max length of the sequence.
           - device: Device type.
         """
         super().__init__()
-        self.feature_transformers = nn.ModuleList(
-            [
-                FeatureTransformer(
-                    feat_dim=feat_dim,
-                    out_dim=item_dim_output,
-                    out_latents=item_num_outputs,
-                    inner_dim=item_dim_hidden,
-                    heads=item_num_heads,
-                    attn_dropout=attn_dropout,
-                    ff_dropout=attn_ff_dropout,
-                )
-                for feat_dim in dim_item_feats
-            ]
-        )
         self.id_embedding = nn.Embedding(
             num_embeddings=(num_items + 1),
             embedding_dim=latent_dim,
@@ -69,6 +46,11 @@ class SIA(nn.Module):
             embedding_dim=latent_dim,
             padding_idx=0,
         )
+        self.feat_embeddings = nn.ModuleList([
+            nn.Linear(feat_dim, feature_dim, bias=False)
+            for feat_dim in dim_item_feats
+        ])
+
         get_latent_attn = lambda: PreNorm(
             latent_dim,
             Attention(
@@ -82,7 +64,7 @@ class SIA(nn.Module):
             latent_dim,
             Attention(
                 query_dim=latent_dim,
-                context_dim=item_dim_output,
+                context_dim=feature_dim,
                 heads=attn_num_heads,
                 dim_head=attn_dim_head,
                 dropout=attn_dropout,
@@ -95,24 +77,25 @@ class SIA(nn.Module):
                 dropout=attn_ff_dropout,
             ),
         )
-
+        self.cross_attn = get_cross_attn()
+        self.cross_ff = get_ff()
+        self_attns = nn.ModuleList([])
+        for _ in range(attn_self_per_cross):
+            self_attns.append(
+                nn.ModuleList(
+                    [
+                        get_latent_attn(),
+                        get_ff(),
+                    ]
+                )
+            )
         self.layers = nn.ModuleList([])
         for _ in range(attn_depth):
-            self_attns = nn.ModuleList([])
-            for _ in range(attn_self_per_cross):
-                self_attns.append(
-                    nn.ModuleList(
-                        [
-                            get_latent_attn(),
-                            get_ff(),
-                        ]
-                    )
-                )
             self.layers.append(
                 nn.ModuleList(
                     [
-                        get_cross_attn(),
-                        get_ff(),
+                        self.cross_attn,
+                        self.cross_ff,
                         self_attns,
                     ]
                 )
@@ -120,7 +103,6 @@ class SIA(nn.Module):
         self.to_logits = nn.Sequential(
             Reduce("b n d -> b d", "mean"),
             nn.LayerNorm(latent_dim),
-            # nn.Linear(latent_dim, num_items + 1),
         )
         self.latent_dim = latent_dim
         self.device = device
@@ -134,15 +116,15 @@ class SIA(nn.Module):
 
         # Item features -> concatenated item features (item_feat)
         item_feat = []
-        for item_feat_list, ft in zip(item_feat_lists, self.feature_transformers):
-            item_feat.append(ft(item_feat_list, mask=pos_list))
+        mask_items = []
+        for item_feat_list, fc in zip(item_feat_lists, self.feat_embeddings):
+            item_feat.append(fc(item_feat_list))
+            mask_items.append(pos_list)
         item_feat = torch.cat(item_feat, axis=1)
+        mask_items = torch.cat(mask_items, axis=1)
 
-        # Masks for attention
         mask_latent = pos_list.unsqueeze(2).to(self.device)
-        mask_items = (
-            torch.ones((item_feat.shape[0], item_feat.shape[1])).unsqueeze(2).to(self.device)
-        )
+        mask_items = mask_items.unsqueeze(2).to(self.device)
         mask_cross_attn = einsum("b i d, b j d -> b i j", mask_latent, mask_items) > 0
         mask_self_attn = einsum("b i d, b j d -> b i j", mask_latent, mask_latent) > 0
 
@@ -155,50 +137,5 @@ class SIA(nn.Module):
                 x = self_attn(x, mask=mask_self_attn) + x
                 x = self_ff(x) + x
 
-        # To items
         x = (mask_latent > 0) * x
         return self.to_logits(x)
-
-
-class ItemTransformer(nn.Module):
-    def __init__(
-        self,
-        dim_item_feats,
-        out_dim,
-        id_embedding=None,
-        dim_head=64,
-        heads=2,
-    ):
-        super().__init__()
-        inner_dim = dim_head * heads
-        self.scale = dim_head**-0.5
-        self.s = nn.Parameter(torch.Tensor(1, out_dim))
-        nn.init.xavier_uniform_(self.s)
-        self.id_embedding = id_embedding
-
-        self.ln0 = nn.LayerNorm(out_dim)
-        self.ln1 = nn.LayerNorm(out_dim)
-        self.to_q = nn.Linear(out_dim, inner_dim, bias=False)
-        self.to_k = nn.ModuleList([nn.Linear(dim, inner_dim, bias=False) for dim in dim_item_feats])
-        self.to_v = nn.ModuleList([nn.Linear(dim, inner_dim, bias=False) for dim in dim_item_feats])
-        self.to_out = nn.Linear(inner_dim, out_dim)
-        self.ff = FeedForward(out_dim)
-
-    def forward(self, item_info, id_embedding=None):
-        item, i_feats = item_info
-        batch_size = item.shape[0]
-        if self.id_embedding:
-            latent = self.id_embedding(item)
-            latent = latent.unsqueeze(1)
-        else:
-            latent = repeat(self.s, "1 d -> b 1 d", b=batch_size)
-        q = self.to_q(latent)
-        k = torch.stack([fn(k_in) for fn, k_in in zip(self.to_k, i_feats)], axis=1)
-        v = torch.stack([fn(v_in) for fn, v_in in zip(self.to_v, i_feats)], axis=1)
-
-        sim = einsum("b i d, b j d -> b i j", q, k) * self.scale
-        attn = sim.softmax(dim=-1)
-        out = einsum("b i j, b j d -> b i d", attn, v)
-        out = self.ln0(self.to_out(out)) + latent
-        out = self.ln1(self.ff(out)) + out
-        return out.squeeze(1)        
