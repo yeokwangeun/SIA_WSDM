@@ -50,6 +50,11 @@ class SIA(nn.Module):
             embedding_dim=latent_dim,
             padding_idx=0,
         )
+        self.item_pos_embedding = nn.Embedding(
+            num_embeddings=(maxlen + 1), # 1~maxlen
+            embedding_dim=feature_dim,
+            padding_idx=0,
+        )
         self.feat_embeddings = nn.ModuleList([
             nn.Linear(feat_dim, feature_dim, bias=False)
             for feat_dim in dim_item_feats
@@ -119,16 +124,17 @@ class SIA(nn.Module):
 
         # Item features -> concatenated item features (item_feat)
         item_feat = []
-        mask_items = []
+        pos_items = []
         for item_feat_list, fc in zip(item_feat_lists, self.feat_embeddings):
             item_feat.append(fc(item_feat_list))
-            # mask_items.append(pos_list)
-            mask_items.append(pos_list[:, :-1])
+            pos_items.append(pos_list[:, :-1])
         item_feat = torch.cat(item_feat, axis=1)
-        mask_items = torch.cat(mask_items, axis=1)
+        pos_items = torch.cat(pos_items, axis=1)
+        item_pos_emb = self.item_pos_embedding(pos_items)
+        item_feat = item_feat + item_pos_emb
 
         mask_latent = pos_list.unsqueeze(2).to(self.device)
-        mask_items = mask_items.unsqueeze(2).to(self.device)
+        mask_items = pos_items.unsqueeze(2).to(self.device)
         mask_cross_attn = einsum("b i d, b j d -> b i j", mask_latent, mask_items) > 0
         mask_self_attn = einsum("b i d, b j d -> b i j", mask_latent, mask_latent) > 0
 
