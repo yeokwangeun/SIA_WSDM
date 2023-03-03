@@ -36,13 +36,17 @@ class SIA(nn.Module):
           - device: Device type.
         """
         super().__init__()
+        self.latent_dim = latent_dim
+        self.device = device
         self.id_embedding = nn.Embedding(
-            num_embeddings=(num_items + 1),
+            # num_embeddings=(num_items + 1), # 1~num_items
+            num_embeddings=(num_items + 2), # 1~num_items+1
             embedding_dim=latent_dim,
             padding_idx=0,
         )
         self.pos_embedding = nn.Embedding(
-            num_embeddings=(maxlen + 1),
+            # num_embeddings=(maxlen + 1), # 1~maxlen
+            num_embeddings=(maxlen + 2), # 1~maxlen+1
             embedding_dim=latent_dim,
             padding_idx=0,
         )
@@ -60,11 +64,11 @@ class SIA(nn.Module):
                 dropout=attn_dropout,
             ),
         )
-        get_cross_attn = lambda: PreNorm(
+        get_cross_attn = lambda context_dim: PreNorm(
             latent_dim,
             Attention(
                 query_dim=latent_dim,
-                context_dim=feature_dim,
+                context_dim=context_dim,
                 heads=attn_num_heads,
                 dim_head=attn_dim_head,
                 dropout=attn_dropout,
@@ -77,7 +81,7 @@ class SIA(nn.Module):
                 dropout=attn_ff_dropout,
             ),
         )
-        self.cross_attn = get_cross_attn()
+        self.cross_attn = get_cross_attn(feature_dim)
         self.cross_ff = get_ff()
         self_attns = nn.ModuleList([])
         for _ in range(attn_self_per_cross):
@@ -100,12 +104,11 @@ class SIA(nn.Module):
                     ]
                 )
             )
-        self.to_logits = nn.Sequential(
-            Reduce("b n d -> b d", "mean"),
-            nn.LayerNorm(latent_dim),
-        )
-        self.latent_dim = latent_dim
-        self.device = device
+        # self.to_logits = nn.Sequential(
+        #     Reduce("b n d -> b d", "mean"),
+        #     nn.LayerNorm(latent_dim),
+        # )
+        self.out_ln = nn.LayerNorm(latent_dim)
 
     def forward(self, batch_x):
         # ID sequences -> embedded latent vectors (x)
@@ -119,7 +122,8 @@ class SIA(nn.Module):
         mask_items = []
         for item_feat_list, fc in zip(item_feat_lists, self.feat_embeddings):
             item_feat.append(fc(item_feat_list))
-            mask_items.append(pos_list)
+            # mask_items.append(pos_list)
+            mask_items.append(pos_list[:, :-1])
         item_feat = torch.cat(item_feat, axis=1)
         mask_items = torch.cat(mask_items, axis=1)
 
@@ -137,5 +141,6 @@ class SIA(nn.Module):
                 x = self_attn(x, mask=mask_self_attn) + x
                 x = self_ff(x) + x
 
-        x = (mask_latent > 0) * x
-        return self.to_logits(x)
+        # x = (mask_latent > 0) * x
+        # return self.to_logits(x)
+        return self.out_ln(x[:, -1, :])

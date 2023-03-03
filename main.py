@@ -37,7 +37,7 @@ def main():
     inter, item_feats, pop = load_data(args, raw_dir, processed_dir, logger)
     dim_item_feats = [tuple(feat.values())[0].shape[0] for feat in item_feats]
     args.dim_item_feats = dim_item_feats
-    num_items = len(pop)
+    args.num_items = len(pop)
 
     logger.info("Loading Dataloaders")
     train_dataset = TrainDataset(inter, item_feats, pop, args, logger)
@@ -62,7 +62,7 @@ def main():
         attn_dropout=args.attn_dropout,
         attn_ff_dropout=args.attn_ff_dropout,
         dim_item_feats=dim_item_feats,
-        num_items=num_items,
+        num_items=args.num_items,
         maxlen=args.maxlen,
         device=args.device,
     )
@@ -102,7 +102,7 @@ def main():
             writer,
             logger,
             log_dir,
-            args.device
+            args.device,
         )
     else:
         if not args.saved_model_path:

@@ -9,12 +9,11 @@ class DataLoaderHandler:
         self.maxlen = args.maxlen
         self.batch_size = args.batch_size
         self.device = args.device
-        self.crop_random = args.crop_random
-        self.crop_ratio = args.crop_ratio
         self.logger = logger
         self.dataset = dataset
         self.dataloader = self.load_dataloader(dataset)
         self.pad_item_feats = [np.zeros((self.dataset.n_neg, args.maxlen, dim)) for dim in args.dim_item_feats]
+        self.num_items = args.num_items
 
     def load_dataloader(self, dataset):
         if self.mode == "train":
@@ -79,6 +78,8 @@ class DataLoaderHandler:
                 np.concatenate([np.repeat(padded2d, i_feat.shape[1], axis=1), i_feat], axis=0)
                 for i_feat in i_feats
             ]
+        seq = np.append(seq, self.num_items + 1) # CLS token
+        pos = np.append(pos, pos[-1] + 1) # CLS token
         seq = torch.tensor(seq, dtype=torch.long)
         pos = torch.tensor(pos, dtype=torch.long)
         i_feats = [torch.tensor(i_feat, dtype=torch.float) for i_feat in i_feats]

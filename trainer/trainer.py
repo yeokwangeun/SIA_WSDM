@@ -7,7 +7,7 @@ from einops import rearrange, repeat
 
 def get_item_embedding(
     batch_y,
-    model
+    model,
 ):
     item, item_feats = batch_y
     x = model.id_embedding(item).unsqueeze(1)
@@ -34,7 +34,7 @@ def train(
     writer,
     logger,
     log_dir,
-    device
+    device,
 ):
     model.train()
     best_val = 0.0
