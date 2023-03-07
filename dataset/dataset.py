@@ -105,7 +105,12 @@ class TrainDataset:
     def __getitem__(self, idx):
         seq = np.array(self.df.iloc[idx, 0])
         next_item = self.df.iloc[idx, 1]
-        next_neg = self.df.iloc[idx, 2]
+        if random.random() < self.args.hard_negative_ratio:
+            next_neg = random.choice(seq)
+            if next_neg == next_item:
+                next_neg = self.df.iloc[idx, 2]
+        else:
+            next_neg = self.df.iloc[idx, 2]
         
         item_feats = []
         item_feats_pos = []
@@ -113,7 +118,10 @@ class TrainDataset:
         for mapper in self.item_feats:
             seq_feat = np.array([mapper[item_id] for item_id in seq])
             pos_feat = np.array(mapper[next_item])
-            neg_feat = np.array(mapper[next_neg])
+            if random.random() < self.args.hard_negative_feature_ratio:
+                neg_feat = pos_feat
+            else:
+                neg_feat = np.array(mapper[next_neg])
             item_feats.append(seq_feat)
             item_feats_pos.append(pos_feat)
             item_feats_neg.append(neg_feat)

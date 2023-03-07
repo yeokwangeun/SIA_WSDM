@@ -3,7 +3,7 @@ import argparse
 import logging
 import os
 import torch
-from torch import optim, nn
+from torch import optim
 from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 import random
@@ -53,6 +53,7 @@ def main():
 
     logger.info("Loading Model")
     model = SIA(
+        fusion_mode=args.seq_fusion_mode,
         latent_dim=args.latent_dim,
         feature_dim=args.feature_dim,
         attn_num_heads=args.attn_num_heads,
@@ -61,6 +62,7 @@ def main():
         attn_self_per_cross=args.attn_self_per_cross,
         attn_dropout=args.attn_dropout,
         attn_ff_dropout=args.attn_ff_dropout,
+        feat_mask_ratio=args.feat_mask_ratio,
         dim_item_feats=dim_item_feats,
         num_items=args.num_items,
         maxlen=args.maxlen,
@@ -73,7 +75,6 @@ def main():
         model = model.to(args.device)
         logger.info(model)
         optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-        # optimizer = optim.SGD(model.parameters(), lr=args.lr, weight_decay=args.weight_decay, momentum=0.9)
         scheduler = WarmupBeforeMultiStepLR(
             optimizer,
             warmup_step=args.lr_warmup_step,
@@ -87,7 +88,6 @@ def main():
             model.load_state_dict(chkpoint["model_state_dict"])
             optimizer.load_state_dict(chkpoint["optimizer_state_dict"])
             scheduler.load_state_dict(chkpoint["scheduler_state_dict"])
-        loss_fn = nn.BCEWithLogitsLoss()
         writer = get_writer(args, log_dir)
         model = train(
             start_epoch,
@@ -98,11 +98,13 @@ def main():
             model,
             optimizer,
             scheduler,
-            loss_fn,
+            args.criterion,
             writer,
             logger,
             log_dir,
             args.device,
+            args.item_fusion_mode,
+            args.one_to_one_loss,
         )
     else:
         if not args.saved_model_path:
@@ -111,7 +113,7 @@ def main():
         model.load_state_dict(torch.load(args.saved_model_path))
 
     logger.info("Evaluation starts")
-    test_metrics = evaluate(model, test_loader)
+    test_metrics = evaluate(model, test_loader, args.item_fusion_mode)
     test_log = ""
     for k, v in test_metrics.items():
         test_log += f"{k}: {v:.5f} "
@@ -132,17 +134,22 @@ def parse_arguments():
     parser.add_argument("--maxlen", type=int, default=50)
     parser.add_argument("--crop_random", type=float, default=0.0)
     parser.add_argument("--crop_ratio", type=float, default=1.0)
-
+    parser.add_argument("--hard_negative_ratio", type=float, default=0.)
+    parser.add_argument("--hard_negative_feature_ratio", type=float, default=0.)
+    
     #################### MODEL ####################
     parser.add_argument("--saved_model_path", type=str, default=None)
     parser.add_argument("--latent_dim", type=int, default=64)
     parser.add_argument("--feature_dim", type=int, default=64)
+    parser.add_argument("--feat_mask_ratio", type=float, default=0.)    
     parser.add_argument("--attn_dim_head", type=int, default=64)
     parser.add_argument("--attn_num_heads", type=int, default=1)
     parser.add_argument("--attn_depth", type=int, default=1)
     parser.add_argument("--attn_self_per_cross", type=int, default=6)
     parser.add_argument("--attn_dropout", type=float, default=0.2)
     parser.add_argument("--attn_ff_dropout", type=float, default=0.2)
+    parser.add_argument("--seq_fusion_mode", type=str, default="not")
+    parser.add_argument("--item_fusion_mode", type=str, default="mean")
 
     #################### TRAIN ####################
     parser.add_argument("--num_epochs", type=int, default=50)
@@ -153,6 +160,8 @@ def parse_arguments():
     parser.add_argument("--weight_decay", type=float, default=1e-2)
     parser.add_argument("--early_stop", type=int, default=50)
     parser.add_argument("--sequence_split", type=int, default=1)
+    parser.add_argument("--one_to_one_loss", type=int, default=0)
+    parser.add_argument("--criterion", type=str, default="BCE")
 
     #################### EVALUATION ####################
     parser.add_argument("--eval_sample_mode", type=str, default="uni")

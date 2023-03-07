@@ -1,12 +1,15 @@
 import torch
 from torch import nn, einsum
 from einops.layers.torch import Reduce
+from einops import repeat
 from model.modules import PreNorm, Attention, FeedForward
+import random
 
 
 class SIA(nn.Module):
     def __init__(
         self,
+        fusion_mode,
         latent_dim,
         feature_dim,
         attn_num_heads,
@@ -15,6 +18,7 @@ class SIA(nn.Module):
         attn_self_per_cross,
         attn_dropout,
         attn_ff_dropout,
+        feat_mask_ratio,
         dim_item_feats,
         num_items,
         maxlen,
@@ -38,14 +42,14 @@ class SIA(nn.Module):
         super().__init__()
         self.latent_dim = latent_dim
         self.device = device
+        self.fusion_mode = fusion_mode
+        self.feat_mask_ratio = feat_mask_ratio
         self.id_embedding = nn.Embedding(
-            # num_embeddings=(num_items + 1), # 1~num_items
             num_embeddings=(num_items + 2), # 1~num_items+1
             embedding_dim=latent_dim,
             padding_idx=0,
         )
         self.pos_embedding = nn.Embedding(
-            # num_embeddings=(maxlen + 1), # 1~maxlen
             num_embeddings=(maxlen + 2), # 1~maxlen+1
             embedding_dim=latent_dim,
             padding_idx=0,
@@ -59,6 +63,11 @@ class SIA(nn.Module):
             nn.Linear(feat_dim, feature_dim, bias=False)
             for feat_dim in dim_item_feats
         ])
+        self.feat_embeddings.append(nn.Embedding(
+            num_embeddings=(num_items + 1),
+            embedding_dim=feature_dim,
+            padding_idx=0
+        ))
 
         get_latent_attn = lambda: PreNorm(
             latent_dim,
@@ -109,15 +118,13 @@ class SIA(nn.Module):
                     ]
                 )
             )
-        # self.to_logits = nn.Sequential(
-        #     Reduce("b n d -> b d", "mean"),
-        #     nn.LayerNorm(latent_dim),
-        # )
         self.out_ln = nn.LayerNorm(latent_dim)
 
     def forward(self, batch_x):
         # ID sequences -> embedded latent vectors (x)
         seq_list, pos_list, item_feat_lists = batch_x
+        batch_size, seqlen = seq_list.shape
+        seqlen -= 1
         id_emb = self.id_embedding(seq_list)
         pos_emb = self.pos_embedding(pos_list)
         x = id_emb + pos_emb
@@ -125,28 +132,55 @@ class SIA(nn.Module):
         # Item features -> concatenated item features (item_feat)
         item_feat = []
         pos_items = []
-        for item_feat_list, fc in zip(item_feat_lists, self.feat_embeddings):
-            item_feat.append(fc(item_feat_list))
-            pos_items.append(pos_list[:, :-1])
-        item_feat = torch.cat(item_feat, axis=1)
-        pos_items = torch.cat(pos_items, axis=1)
-        item_pos_emb = self.item_pos_embedding(pos_items)
-        item_feat = item_feat + item_pos_emb
+        mask_items = []
+        item_feat_lists.append(seq_list[:, :-1])
+        for item_feat_list, feat_embedding in zip(item_feat_lists, self.feat_embeddings):
+            item_feat.append(feat_embedding(item_feat_list))
+            if self.fusion_mode != "mean":
+                pos_items.append(pos_list[:, :-1])
+                if self.fusion_mode == "attn":
+                    mask_items.append(torch.diag_embed(pos_list)[:, :, :-1])
+                elif self.fusion_mode == "masked_attn":
+                    mask_items.append((repeat(pos_list, "b n -> b m n", m=pos_list.shape[-1]) * repeat(pos_list, "b n -> b n m", m=pos_list.shape[-1])).tril()[:, :, :-1])
+        if self.fusion_mode == "mean":
+            item_feat = torch.stack(item_feat).mean(axis=0)
+        else:
+            item_feat = torch.cat(item_feat, axis=1)
+            pos_items = torch.cat(pos_items, axis=1)
+            item_pos_emb = self.item_pos_embedding(pos_items)
+            item_feat = item_feat + item_pos_emb
 
+        # Masks for Attention
         mask_latent = pos_list.unsqueeze(2).to(self.device)
-        mask_items = pos_items.unsqueeze(2).to(self.device)
-        mask_cross_attn = einsum("b i d, b j d -> b i j", mask_latent, mask_items) > 0
         mask_self_attn = einsum("b i d, b j d -> b i j", mask_latent, mask_latent) > 0
+        if self.fusion_mode == "mean":
+            mask_items = pos_list[:, :-1].unsqueeze(2).to(self.device)
+            mask_cross_attn = einsum("b i d, b j d -> b i j", mask_latent, mask_items) > 0
+        elif self.fusion_mode == "not":
+            mask_items = pos_items.unsqueeze(2).to(self.device)
+            mask_cross_attn = einsum("b i d, b j d -> b i j", mask_latent, mask_items) > 0
+        else:
+            mask_cross_attn = torch.cat(mask_items, axis=2) > 0
+        
+        unmask_feat = torch.ones((batch_size, seqlen + 1, seqlen), dtype=bool)
+        mask_feat = torch.zeros((batch_size, seqlen + 1, seqlen), dtype=bool)
+        num_feat = len(item_feat_lists)
 
         # Iterative Attention
+        out = []
         for cross_attn, cross_ff, self_attns in self.layers:
-            x = cross_attn(x, context=item_feat, mask=mask_cross_attn) + x
+            if self.training:
+                random_mask = [mask_feat if random.random() < self.feat_mask_ratio else unmask_feat for _ in range(num_feat)]
+                random_mask = torch.cat(random_mask, axis=-1).to(self.device)
+                x = cross_attn(x, context=item_feat, mask=mask_cross_attn * random_mask) + x
+            else:
+                x = cross_attn(x, context=item_feat, mask=mask_cross_attn) + x
             x = cross_ff(x) + x
 
             for self_attn, self_ff in self_attns:
                 x = self_attn(x, mask=mask_self_attn) + x
                 x = self_ff(x) + x
 
-        # x = (mask_latent > 0) * x
-        # return self.to_logits(x)
-        return self.out_ln(x[:, -1, :])
+            out.append(self.out_ln(x[:, -1, :]))
+
+        return out
