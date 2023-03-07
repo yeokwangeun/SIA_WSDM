@@ -10,6 +10,7 @@ class SIA(nn.Module):
     def __init__(
         self,
         fusion_mode,
+        out_token,
         latent_dim,
         feature_dim,
         attn_num_heads,
@@ -42,6 +43,7 @@ class SIA(nn.Module):
         super().__init__()
         self.latent_dim = latent_dim
         self.device = device
+        self.out_token = out_token
         self.fusion_mode = fusion_mode
         self.feat_mask_ratio = feat_mask_ratio
         self.id_embedding = nn.Embedding(
@@ -168,6 +170,7 @@ class SIA(nn.Module):
 
         # Iterative Attention
         out = []
+        out_idx = -1 if self.out_token == "cls" else -2
         for cross_attn, cross_ff, self_attns in self.layers:
             if self.training:
                 random_mask = [mask_feat if random.random() < self.feat_mask_ratio else unmask_feat for _ in range(num_feat)]
@@ -181,6 +184,6 @@ class SIA(nn.Module):
                 x = self_attn(x, mask=mask_self_attn) + x
                 x = self_ff(x) + x
 
-            out.append(self.out_ln(x[:, -1, :]))
+            out.append(self.out_ln(x[:, out_idx, :]))
 
         return out

@@ -54,6 +54,7 @@ def main():
     logger.info("Loading Model")
     model = SIA(
         fusion_mode=args.seq_fusion_mode,
+        out_token=args.out_token,
         latent_dim=args.latent_dim,
         feature_dim=args.feature_dim,
         attn_num_heads=args.attn_num_heads,
@@ -150,6 +151,7 @@ def parse_arguments():
     parser.add_argument("--attn_ff_dropout", type=float, default=0.2)
     parser.add_argument("--seq_fusion_mode", type=str, default="not")
     parser.add_argument("--item_fusion_mode", type=str, default="mean")
+    parser.add_argument("--out_token", type=str, default="cls")
 
     #################### TRAIN ####################
     parser.add_argument("--num_epochs", type=int, default=50)
