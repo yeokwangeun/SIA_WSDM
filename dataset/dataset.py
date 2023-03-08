@@ -26,6 +26,8 @@ def load_data(args, raw_dir, processed_dir, logger):
     logger.info("Preprocessing starts")
     raw_dir = os.path.join(raw_dir, args.dataset)
     ratings = pd.read_csv(os.path.join(raw_dir, f"ratings_{args.dataset}.csv"))
+    if args.dataset == "ml-1m":
+        ratings = ratings[["user_id", "item_id", "rating"]]    
     ratings.columns = ["user_id", "item_id", "timestamp"]
     item = []
     for content in args.content:
@@ -33,6 +35,7 @@ def load_data(args, raw_dir, processed_dir, logger):
             feat = pickle.load(pf)
             if content == "image":
                 feat = {k: np.mean(v, axis=0) for k, v in feat.items()}
+            feat = {str(k): v for k, v in feat.items()}
             item.append(feat)
 
     logger.info("Mapping user_id and item_id to index")
@@ -54,11 +57,11 @@ def load_data(args, raw_dir, processed_dir, logger):
 
 
 def map_to_index(ratings, *item_feat):
-    user_mapper = {uid: (i + 1) for i, uid in enumerate(ratings["user_id"].unique())}
-    item_mapper = {iid: (i + 1) for i, iid in enumerate(ratings["item_id"].unique())}
+    user_mapper = {str(uid): (i + 1) for i, uid in enumerate(ratings["user_id"].unique())}
+    item_mapper = {str(iid): (i + 1) for i, iid in enumerate(ratings["item_id"].unique())}
 
-    ratings["user_id"] = [user_mapper[uid] for uid in ratings["user_id"]]
-    ratings["item_id"] = [item_mapper[iid] for iid in ratings["item_id"]]
+    ratings["user_id"] = [user_mapper[str(uid)] for uid in ratings["user_id"]]
+    ratings["item_id"] = [item_mapper[str(iid)] for iid in ratings["item_id"]]
     item_feat = [{item_mapper[k]: v for k, v in feat.items()} for feat in item_feat]
     return (ratings, *item_feat)
 
@@ -105,7 +108,7 @@ class TrainDataset:
     def __getitem__(self, idx):
         seq = np.array(self.df.iloc[idx, 0])
         next_item = self.df.iloc[idx, 1]
-        next_negs = np.array([i for i in random.choices(self.pop, k=self.n_neg + 1) if i != next_item][:self.n_neg])
+        next_negs = np.array([i for i in random.choices(self.pop, k=self.n_neg + 3) if i != next_item][:self.n_neg])
         
         item_feats = []
         item_feats_pos = []
