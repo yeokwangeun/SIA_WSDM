@@ -92,12 +92,12 @@ class TrainDataset:
         self.df.drop_duplicates(subset=["tmp"], inplace=True)
         self.df["seq"] = [items[:-1] for items in self.df["items"]]
         self.df["next_item"] = [items[-1] for items in self.df["items"]]
-        self.df["next_neg"] = [[i for i in random.choices(pop, k=2) if i != item][0] for item in self.df["next_item"]]
-        self.df = self.df[["seq", "next_item", "next_neg"]]
+        self.df = self.df[["seq", "next_item"]]
         self.item_feats = item_feats
         self.args = args
         self.logger = logger
-        self.n_neg = 1
+        self.n_neg = args.n_negs_train
+        self.pop = pop
 
     def __len__(self):
         return len(self.df)
@@ -105,12 +105,7 @@ class TrainDataset:
     def __getitem__(self, idx):
         seq = np.array(self.df.iloc[idx, 0])
         next_item = self.df.iloc[idx, 1]
-        if random.random() < self.args.hard_negative_ratio:
-            next_neg = random.choice(seq)
-            if next_neg == next_item:
-                next_neg = self.df.iloc[idx, 2]
-        else:
-            next_neg = self.df.iloc[idx, 2]
+        next_negs = np.array([i for i in random.choices(self.pop, k=self.n_neg + 1) if i != next_item][:self.n_neg])
         
         item_feats = []
         item_feats_pos = []
@@ -118,15 +113,12 @@ class TrainDataset:
         for mapper in self.item_feats:
             seq_feat = np.array([mapper[item_id] for item_id in seq])
             pos_feat = np.array(mapper[next_item])
-            if random.random() < self.args.hard_negative_feature_ratio:
-                neg_feat = pos_feat
-            else:
-                neg_feat = np.array(mapper[next_neg])
+            neg_feats = np.array([mapper[next_neg] for next_neg in next_negs])
             item_feats.append(seq_feat)
             item_feats_pos.append(pos_feat)
-            item_feats_neg.append(neg_feat)
+            item_feats_neg.append(neg_feats)
 
-        return ((seq, item_feats), (next_item, item_feats_pos), (next_neg, item_feats_neg))
+        return ((seq, item_feats), (next_item, item_feats_pos), (next_negs, item_feats_neg))
 
 
 class EvalDataset:
@@ -170,7 +162,7 @@ class EvalDataset:
         pool = list(self.pop)
         pool.remove(next_item)
         if self.eval_mode == "full":
-            candidates = pool
+            pass
         elif self.eval_mode == "uni":
             candidates = random.sample(pool, self.n_neg)
         elif self.eval_mode == "pop":

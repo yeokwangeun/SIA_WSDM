@@ -112,6 +112,7 @@ def main():
             logger.error("For evaluation mode, saved model path must be given.")
             return 1
         model.load_state_dict(torch.load(args.saved_model_path))
+        model = model.to(args.device)
 
     logger.info("Evaluation starts")
     test_metrics = evaluate(model, test_loader, args.item_fusion_mode)
@@ -119,6 +120,10 @@ def main():
     for k, v in test_metrics.items():
         test_log += f"{k}: {v:.5f} "
     logger.info(f"Test - {test_log}")
+    if args.mode == "train":
+        writer.add_hparams(hparam_dict={"log_dir": args.log_dir}, metric_dict={k: v for k, v in test_metrics.items() if k != "NDCG@1"})        
+        writer.flush()
+        writer.close()
 
 
 def parse_arguments():
@@ -133,10 +138,6 @@ def parse_arguments():
     parser.add_argument("--content", type=list, default=["image", "desc"])
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--maxlen", type=int, default=50)
-    parser.add_argument("--crop_random", type=float, default=0.0)
-    parser.add_argument("--crop_ratio", type=float, default=1.0)
-    parser.add_argument("--hard_negative_ratio", type=float, default=0.)
-    parser.add_argument("--hard_negative_feature_ratio", type=float, default=0.)
     
     #################### MODEL ####################
     parser.add_argument("--saved_model_path", type=str, default=None)
@@ -164,6 +165,7 @@ def parse_arguments():
     parser.add_argument("--sequence_split", type=int, default=1)
     parser.add_argument("--one_to_one_loss", type=int, default=0)
     parser.add_argument("--criterion", type=str, default="BCE")
+    parser.add_argument("--n_negs_train", type=int, default=1)
 
     #################### EVALUATION ####################
     parser.add_argument("--eval_sample_mode", type=str, default="uni")

@@ -49,6 +49,7 @@ def train(
 ):
     model.train()
     best_val = 0.0
+    best_save_dir = os.path.join(log_dir, "best")
     patience = 0
     logger.info(f"Training starts - {num_epochs} epochs")
     if criterion == "BCE":
@@ -59,7 +60,7 @@ def train(
         epoch_loss = 0.0
         train_loader = tqdm(train_loader)
         scheduler.step()
-        for batch_x, batch_y_pos, batch_y_neg in train_loader:
+        for batch_x, batch_y_pos, batch_y_negs in train_loader:
             optimizer.zero_grad()
             x_out_list = model(batch_x)
             if not one_to_one_loss:
@@ -68,14 +69,22 @@ def train(
             loss = 0
             for x_out in x_out_list:
                 if criterion == "BCE":
-                    pos_score = torch.diag(x_out @ y_pos_out.T)
-                    pos_label = torch.ones(pos_score.shape).to(device).float()
-                    y_neg_out = get_item_embedding(batch_y_neg, model, item_fusion_mode)
-                    neg_score = torch.diag(x_out @ y_neg_out.T)
+                    items, i_feats = batch_y_negs
+                    batch_size, n_negs = items.shape
+                    items = rearrange(items, "b n -> (b n)")
+                    i_feats = [rearrange(i_feat, "b n d -> (b n) d") for i_feat in i_feats]
+                    y_negs_out = get_item_embedding((items, i_feats), model, item_fusion_mode)
+                    x_out_extended = rearrange(repeat(x_out.unsqueeze(1), "b 1 d -> b n d", n=n_negs), "b n d -> (b n) d")
+                    neg_score = torch.diag(x_out_extended @ y_negs_out.T)
+                    neg_score = rearrange(neg_score, "(b n) -> b n", b=batch_size)
                     neg_label = torch.zeros(neg_score.shape).to(device).float()
 
-                    logits = torch.cat([pos_score, neg_score])
-                    label = torch.cat([pos_label, neg_label])
+                    pos_score = torch.diag(x_out @ y_pos_out.T)
+                    pos_score = rearrange(pos_score, "(b n) -> b n", b=batch_size)
+                    pos_label = torch.ones(pos_score.shape).to(device).float()
+
+                    logits = torch.cat([pos_score, neg_score], axis=1)
+                    label = torch.cat([pos_label, neg_label], axis=1)
                     loss += loss_fn(logits, label)
                 else:
                     loss += loss_fn(x_out, y_pos_out)
@@ -93,24 +102,27 @@ def train(
             writer.add_scalar(f"{k}/valid", v, e)
             val_log += f"{k}: {v:.5f} "
         logger.info(f"Epoch {e} validation - {val_log}")
-        val = val_metrics["NDCG@10"]
-        if val > best_val:
-            best_val = val
-            patience = 0
-        else:
-            patience += 1
-            if patience >= early_stop:
-                logger.info(f"Early stopping at epoch {e}")
-                break
         save_dict = {
             "last_epoch": e,
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "scheduler_state_dict": scheduler.state_dict(),
         }
+        val = val_metrics["NDCG@10"]
+        if val > best_val:
+            best_val = val
+            patience = 0
+            logger.info("Save best model")
+            save_model(best_save_dir, save_dict)
+        else:
+            patience += 1
+            if patience >= early_stop:
+                logger.info(f"Early stopping at epoch {e}")
+                break
         save_model(log_dir, save_dict)
-    writer.flush()
-    writer.close()
+
+    best_model_path = os.path.join(best_save_dir, "model.pt")
+    model.load_state_dict(torch.load(best_model_path))
     return model
 
 
