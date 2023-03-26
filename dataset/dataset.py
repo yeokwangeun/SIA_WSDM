@@ -33,7 +33,7 @@ def load_data(args, raw_dir, processed_dir, logger):
     for content in args.content:
         with open(os.path.join(raw_dir, f"{args.dataset}_{content}_features.pkl"), "rb") as pf:
             feat = pickle.load(pf)
-            if content == "image":
+            if content == "image" and not args.dataset.startswith("FROM_AMAZON"):
                 feat = {k: np.mean(v, axis=0) for k, v in feat.items()}
             feat = {str(k): v for k, v in feat.items()}
             item.append(feat)
@@ -80,7 +80,7 @@ def get_popularity(ratings):
 
 class TrainDataset:
     def __init__(self, inter, item_feats, pop, args, logger):
-        self.df = pd.DataFrame({"items": [items[:-2] for items in inter["items"]]})
+        self.df = pd.DataFrame({"items": [items[:-2] for items in inter["items"] if len(items[:-2]) > 1]})
         split_point = 2 if args.sequence_split else args.maxlen
         self.df = pd.DataFrame(
             {
@@ -132,8 +132,8 @@ class EvalDataset:
         self.logger = logger
         self.eval_mode = eval_mode
         self.n_neg = n_neg
-        self.df = copy.deepcopy(inter)
         last_idx = -2 if mode == "val" else -1
+        self.df = pd.DataFrame({"items": [items for items in inter["items"] if len(items[:last_idx]) > 1]})
         self.df["seq"] = [items[:last_idx] for items in self.df["items"]]
         self.df["next_item"] = [items[last_idx] for items in self.df["items"]]
         self.logger.info("Get candidates for evaluation")

@@ -3,10 +3,11 @@ import argparse
 import logging
 import os
 import torch
-from torch import optim
+from torch import optim, nn
 from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 import random
+import nvidia_smi
 from datetime import datetime
 
 from dataset import load_data, TrainDataset, EvalDataset
@@ -19,7 +20,6 @@ BASEDIR = os.path.dirname(os.path.realpath(__file__))
 
 def main():
     args = parse_arguments()
-    args.device = "cuda" if torch.cuda.is_available() else "cpu"
     log_time = datetime.strftime(datetime.now(), "%Y%m%d_%H%M%S")
     log_dir = args.log_dir if args.log_dir else log_time
     log_dir = os.path.join(BASEDIR, os.path.join(f"log/{args.dataset}", log_dir))
@@ -30,6 +30,13 @@ def main():
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     random.seed(args.seed)
+
+    logger.info("Set GPU")
+    args.device = "cuda" if torch.cuda.is_available() else "cpu"
+    gpu_count = torch.cuda.device_count()
+    logger.info(f"{gpu_count} gpus found")
+    if gpu_count > 1:
+        os.environ["CUDA_VISIBLE_DEVICES"] = ', '.join([str(i) for i in range(3)])
 
     logger.info("Load Data")
     raw_dir = os.path.join(BASEDIR, "dataset/raw")
@@ -69,12 +76,14 @@ def main():
         maxlen=args.maxlen,
         device=args.device,
     )
+    if gpu_count > 1:
+        model = nn.DataParallel(model)
 
+    nvidia_smi.nvmlInit()
     if args.mode == "train":
         logger.info("Train the model")
         start_epoch = 0
         model = model.to(args.device)
-        logger.info(model)
         optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
         scheduler = WarmupBeforeMultiStepLR(
             optimizer,
@@ -106,6 +115,7 @@ def main():
             args.device,
             args.item_fusion_mode,
             args.one_to_one_loss,
+            args.eval_step,
         )
     else:
         if not args.saved_model_path:
@@ -124,6 +134,7 @@ def main():
         writer.add_hparams(hparam_dict={"log_dir": args.log_dir}, metric_dict={k: v for k, v in test_metrics.items() if k != "NDCG@1"})        
         writer.flush()
         writer.close()
+    nvidia_smi.nvmlShutdown()
 
 
 def parse_arguments():
@@ -169,6 +180,7 @@ def parse_arguments():
 
     #################### EVALUATION ####################
     parser.add_argument("--eval_sample_mode", type=str, default="uni")
+    parser.add_argument("--eval_step", type=int, default=1)
 
     return parser.parse_args()
 

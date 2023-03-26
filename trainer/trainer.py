@@ -4,6 +4,7 @@ import itertools
 from tqdm import tqdm
 from einops import rearrange, repeat
 from torch import nn
+import nvidia_smi
 
 
 def get_item_embedding(
@@ -12,7 +13,11 @@ def get_item_embedding(
     mode
 ):
     item, item_feats = batch_y
-    x = model.id_embedding(item).unsqueeze(1)
+    try:
+        x = model.id_embedding(item).unsqueeze(1)
+    except AttributeError:
+        model = model.module
+        x = model.id_embedding(item).unsqueeze(1)
     if mode == "not":
         return x.squeeze(1)
     
@@ -46,7 +51,10 @@ def train(
     device,
     item_fusion_mode,
     one_to_one_loss,
+    eval_step,
 ):
+    nvidia_smi.nvmlInit()
+    device_cnt = nvidia_smi.nvmlDeviceGetCount()
     model.train()
     best_val = 0.0
     best_save_dir = os.path.join(log_dir, "best")
@@ -91,38 +99,47 @@ def train(
             loss.backward()
             epoch_loss += loss.item()
             optimizer.step()
-            train_loader.set_description(f"Epoch {e} - loss: {loss.item():.4f}")
+            gpu_mem_log = ""
+            for i in range(device_cnt):
+                handle = nvidia_smi.nvmlDeviceGetHandleByIndex(i)
+                info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
+                used = info.used / (1024 ** 3)
+                total = info.total / (1024 ** 3)
+                gpu_mem_log += f"Device{i} - {used:.2f}G/{total:.2f}G "
+            train_loader.set_description(f"Epoch {e} - Loss: {loss.item():.4f}. GPU MEM: {gpu_mem_log}")
         current_lr = optimizer.param_groups[0]["lr"]
         logger.info(f"Epoch {e} - lr: {current_lr}, loss: {epoch_loss}")
         writer.add_scalar("Loss/train", epoch_loss, e)
         writer.add_scalar("LR", current_lr, e)
-        val_metrics = evaluate(model, val_loader, item_fusion_mode, criterion=criterion, loss_fn=loss_fn)
-        val_log = ""
-        for k, v in val_metrics.items():
-            writer.add_scalar(f"{k}/valid", v, e)
-            val_log += f"{k}: {v:.5f} "
-        logger.info(f"Epoch {e} validation - {val_log}")
         save_dict = {
             "last_epoch": e,
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "scheduler_state_dict": scheduler.state_dict(),
         }
-        val = val_metrics["NDCG@10"]
-        if val > best_val:
-            best_val = val
-            patience = 0
-            logger.info("Save best model")
-            save_model(best_save_dir, save_dict)
-        else:
-            patience += 1
-            if patience >= early_stop:
-                logger.info(f"Early stopping at epoch {e}")
-                break
         save_model(log_dir, save_dict)
+        if (e + 1) % eval_step == 0:
+            val_metrics = evaluate(model, val_loader, item_fusion_mode, criterion=criterion, loss_fn=loss_fn)
+            val_log = ""
+            for k, v in val_metrics.items():
+                writer.add_scalar(f"{k}/valid", v, e)
+                val_log += f"{k}: {v:.5f} "
+            logger.info(f"Epoch {e} validation - {val_log}")
+            val = val_metrics["NDCG@10"]
+            if val > best_val:
+                best_val = val
+                patience = 0
+                logger.info("Save best model")
+                save_model(best_save_dir, save_dict)
+            else:
+                patience += 1
+                if patience >= early_stop:
+                    logger.info(f"Early stopping at epoch {e}")
+                    break
 
     best_model_path = os.path.join(best_save_dir, "model.pt")
     model.load_state_dict(torch.load(best_model_path))
+    nvidia_smi.nvmlShutdown()
     return model
 
 
