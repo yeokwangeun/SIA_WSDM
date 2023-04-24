@@ -11,17 +11,20 @@ def load_data(args, raw_dir, processed_dir, logger):
     if not os.path.exists(processed_dir):
         os.makedirs(processed_dir)
     inter_file = os.path.join(processed_dir, f"{args.dataset}_inter.pkl")
+    cold_file = os.path.join(processed_dir, f"{args.dataset}_cold_inter.pkl")
     item_file = os.path.join(processed_dir, f"{args.dataset}_item.pkl")
     pop_file = os.path.join(processed_dir, f"{args.dataset}_pop.pkl")
-    if os.path.exists(inter_file) and os.path.exists(item_file) and os.path.exists(pop_file):
+    if os.path.exists(inter_file) and os.path.exists(item_file) and os.path.exists(pop_file) and os.path.exists(cold_file):
         logger.info("Preprocessing already done")
-        with open(inter_file, "rb") as inter_pf, open(item_file, "rb") as item_pf, open(
-            pop_file, "rb"
-        ) as pop_pf:
+        with open(inter_file, "rb") as inter_pf, \
+            open(cold_file, "rb") as cold_pf, \
+            open(item_file, "rb") as item_pf, \
+            open(pop_file, "rb") as pop_pf:
             inter = pickle.load(inter_pf)
+            cold_inter = pickle.load(cold_pf)
             item = pickle.load(item_pf)
             pop = pickle.load(pop_pf)
-        return (inter, item, pop)
+        return (inter, item, pop, cold_inter)
 
     logger.info("Preprocessing starts")
     raw_dir = os.path.join(raw_dir, args.dataset)
@@ -40,20 +43,27 @@ def load_data(args, raw_dir, processed_dir, logger):
 
     logger.info("Mapping user_id and item_id to index")
     ratings, *item = map_to_index(ratings, *item)
+    logger.info("Get Cold Item List")
+    cold_items = get_cold_items(ratings, args.cold_item_threshold)
     logger.info("Make sequence shaped data")
     inter = convert_to_seq(ratings)
+    logger.info("Get Cold Interactions")
+    cold_inter = pd.DataFrame([row for row in inter.itertuples() if row.items[-1] in cold_items])
+    cold_inter = cold_inter[["user_id", "items"]]
     logger.info("Get popularity information")
     pop = get_popularity(ratings)
 
     logger.info("Preprocessing done")
-    with open(inter_file, "wb") as inter_pf, open(item_file, "wb") as item_pf, open(
-        pop_file, "wb"
-    ) as pop_pf:
+    with open(inter_file, "wb") as inter_pf, \
+        open(cold_file, "wb") as cold_pf, \
+        open(item_file, "wb") as item_pf, \
+        open(pop_file, "wb") as pop_pf:
         pickle.dump(inter, inter_pf)
+        pickle.dump(cold_inter, cold_pf)
         pickle.dump(item, item_pf)
         pickle.dump(pop, pop_pf)
 
-    return (inter, item, pop)
+    return (inter, item, pop, cold_inter)
 
 
 def map_to_index(ratings, *item_feat):
@@ -62,7 +72,7 @@ def map_to_index(ratings, *item_feat):
 
     ratings["user_id"] = [user_mapper[str(uid)] for uid in ratings["user_id"]]
     ratings["item_id"] = [item_mapper[str(iid)] for iid in ratings["item_id"]]
-    item_feat = [{item_mapper[k]: v for k, v in feat.items()} for feat in item_feat]
+    item_feat = [{item_mapper[k]: v for k, v in feat.items() if k in item_mapper} for feat in item_feat]
     return (ratings, *item_feat)
 
 
@@ -76,6 +86,12 @@ def get_popularity(ratings):
     pop = ratings.groupby("item_id").count()["user_id"].reset_index(name="count")
     pop.sort_values(by="count", ascending=False, inplace=True)
     return tuple(pop["item_id"].to_list())
+
+
+def get_cold_items(ratings, threshold):
+    item_count = ratings.groupby("item_id").count()["timestamp"].reset_index().rename(columns={"timestamp": "count"})
+    cold_items = set(item_count[item_count["count"] <= threshold]["item_id"].tolist())
+    return cold_items
 
 
 class TrainDataset:
