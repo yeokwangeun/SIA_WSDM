@@ -41,7 +41,7 @@ def main():
     logger.info("Load Data")
     raw_dir = os.path.join(BASEDIR, "dataset/raw")
     processed_dir = os.path.join(BASEDIR, "dataset/processed")
-    inter, item_feats, pop, cold_inter = load_data(args, raw_dir, processed_dir, logger)
+    inter, item_feats, pop = load_data(args, raw_dir, processed_dir, logger)
     dim_item_feats = [tuple(feat.values())[0].shape[0] for feat in item_feats]
     args.dim_item_feats = dim_item_feats
     args.num_items = len(pop)
@@ -54,13 +54,9 @@ def main():
     test_dataset = EvalDataset(
         inter, item_feats, pop, args, logger, mode="test", eval_mode=args.eval_sample_mode,
     )
-    cold_dataset = EvalDataset(
-        cold_inter, item_feats, pop, args, logger, mode="test", eval_mode=args.eval_sample_mode,
-    )
     train_loader = DataLoaderHandler("train", train_dataset, args, logger).get_dataloader()
     val_loader = DataLoaderHandler("val", val_dataset, args, logger).get_dataloader()
     test_loader = DataLoaderHandler("test", test_dataset, args, logger).get_dataloader()
-    cold_loader = DataLoaderHandler("test", cold_dataset, args, logger).get_dataloader()
 
     logger.info("Loading Model")
     model = SIA(
@@ -134,14 +130,6 @@ def main():
     for k, v in test_metrics.items():
         test_log += f"{k}: {v:.5f} "
     logger.info(f"Test - {test_log}")
-
-    logger.info("Evaluation on Cold Items starts")
-    test_metrics = evaluate(model, cold_loader, args.item_fusion_mode)
-    test_log = ""
-    for k, v in test_metrics.items():
-        test_log += f"{k}: {v:.5f} "
-    logger.info(f"Cold Test - {test_log}")
-
     if args.mode == "train":
         writer.add_hparams(hparam_dict={"log_dir": args.log_dir}, metric_dict={k: v for k, v in test_metrics.items() if k != "NDCG@1"})        
         writer.flush()
@@ -161,7 +149,6 @@ def parse_arguments():
     parser.add_argument("--content", type=list, default=["image", "desc"])
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--maxlen", type=int, default=50)
-    parser.add_argument("--cold_item_threshold", type=int, default=1)
     
     #################### MODEL ####################
     parser.add_argument("--saved_model_path", type=str, default=None)
