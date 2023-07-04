@@ -172,7 +172,7 @@ def evaluate(
             scores = torch.cat([pos_score, neg_score], axis=1)
             scores = scores.detach().cpu()
             labels = torch.cat([torch.ones(pos_score.shape), torch.zeros(neg_score.shape)], axis=1)
-            metrics = calculate_metrics(scores, labels, k_list=[1, 5, 10])
+            metrics = calculate_metrics(scores, labels, k_list=[1, 5, 10, 20])
             if criterion == "BCE":
                 loss = loss_fn(scores, labels)
                 metrics["Loss"] = loss.item()
@@ -183,7 +183,7 @@ def evaluate(
     return metrics_handler.get_metrics()
 
 
-def calculate_metrics(scores, labels, k_list=[1, 5, 10]):
+def calculate_metrics(scores, labels, k_list=[1, 5, 10, 20]):
     metrics = [f"{metric}@{k}" for metric, k in itertools.product(["NDCG", "HR"], k_list)]
     metrics_sum = {metric: 0.0 for metric in metrics}
     rank = (-scores).argsort(dim=1)

@@ -126,7 +126,7 @@ class SIA(nn.Module):
         # ID sequences -> embedded latent vectors (x)
         seq_list, pos_list, item_feat_lists = batch_x
         batch_size, seqlen = seq_list.shape
-        seqlen -= 1
+        seqlen -= 1 # cls token
         id_emb = self.id_embedding(seq_list)
         pos_emb = self.pos_embedding(pos_list)
         x = id_emb + pos_emb
@@ -135,7 +135,7 @@ class SIA(nn.Module):
         item_feat = []
         pos_items = []
         mask_items = []
-        item_feat_lists.append(seq_list[:, :-1])
+        item_feat_lists.append(seq_list[:, :-1]) # append id attributes
         for item_feat_list, feat_embedding in zip(item_feat_lists, self.feat_embeddings):
             item_feat.append(feat_embedding(item_feat_list))
             if self.fusion_mode != "mean":
@@ -157,9 +157,6 @@ class SIA(nn.Module):
         mask_self_attn = einsum("b i d, b j d -> b i j", mask_latent, mask_latent) > 0
         if self.fusion_mode == "mean":
             mask_items = pos_list[:, :-1].unsqueeze(2).to(self.device)
-            mask_cross_attn = einsum("b i d, b j d -> b i j", mask_latent, mask_items) > 0
-        elif self.fusion_mode == "not":
-            mask_items = pos_items.unsqueeze(2).to(self.device)
             mask_cross_attn = einsum("b i d, b j d -> b i j", mask_latent, mask_items) > 0
         else:
             mask_cross_attn = torch.cat(mask_items, axis=2) > 0
