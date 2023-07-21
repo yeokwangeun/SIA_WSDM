@@ -1,4 +1,5 @@
 log*
+slurm_log
 dataset/raw
 dataset/processed
 *__pycache__*
