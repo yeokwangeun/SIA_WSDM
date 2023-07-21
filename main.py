@@ -75,6 +75,9 @@ def main():
         num_items=args.num_items,
         maxlen=args.maxlen,
         device=args.device,
+        latent_random=args.latent_random,
+        latent_without_pos=args.latent_without_pos,
+        item_without_pos=args.item_without_pos,
     )
     if gpu_count > 1:
         model = nn.DataParallel(model)
@@ -164,6 +167,9 @@ def parse_arguments():
     parser.add_argument("--seq_fusion_mode", type=str, default="not")
     parser.add_argument("--item_fusion_mode", type=str, default="mean")
     parser.add_argument("--out_token", type=str, default="cls")
+    parser.add_argument("--latent_random", action="store_true")
+    parser.add_argument("--latent_without_pos", action="store_true")
+    parser.add_argument("--item_without_pos", action="store_true")
 
     #################### TRAIN ####################
     parser.add_argument("--num_epochs", type=int, default=50)

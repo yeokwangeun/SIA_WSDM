@@ -24,6 +24,9 @@ class SIA(nn.Module):
         num_items,
         maxlen,
         device,
+        latent_random,
+        latent_without_pos,
+        item_without_pos,
     ):
         """
         Args:
@@ -121,6 +124,11 @@ class SIA(nn.Module):
                 )
             )
         self.out_ln = nn.LayerNorm(latent_dim)
+        self.latent = nn.Parameter(torch.Tensor(1, maxlen + 1, latent_dim))
+        nn.init.xavier_uniform_(self.latent)
+        self.latent_random = latent_random
+        self.latent_without_pos = latent_without_pos
+        self.item_without_pos = item_without_pos
 
     def forward(self, batch_x):
         # ID sequences -> embedded latent vectors (x)
@@ -129,7 +137,9 @@ class SIA(nn.Module):
         seqlen -= 1 # cls token
         id_emb = self.id_embedding(seq_list)
         pos_emb = self.pos_embedding(pos_list)
-        x = id_emb + pos_emb
+        x = repeat(self.latent, "1 l d -> b l d", b=batch_size) if self.latent_random else id_emb
+        x = x if self.latent_without_pos else (x + pos_emb)
+        # x = id_emb + pos_emb
 
         # Item features -> concatenated item features (item_feat)
         item_feat = []
@@ -150,7 +160,7 @@ class SIA(nn.Module):
             item_feat = torch.cat(item_feat, axis=1)
             pos_items = torch.cat(pos_items, axis=1)
             item_pos_emb = self.item_pos_embedding(pos_items)
-            item_feat = item_feat + item_pos_emb
+            item_feat = item_feat if self.item_without_pos else (item_feat + item_pos_emb)
 
         # Masks for Attention
         mask_latent = pos_list.unsqueeze(2).to(self.device)

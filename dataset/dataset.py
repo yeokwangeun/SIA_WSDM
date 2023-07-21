@@ -62,7 +62,7 @@ def map_to_index(ratings, *item_feat):
 
     ratings["user_id"] = [user_mapper[str(uid)] for uid in ratings["user_id"]]
     ratings["item_id"] = [item_mapper[str(iid)] for iid in ratings["item_id"]]
-    item_feat = [{item_mapper[k]: v for k, v in feat.items()} for feat in item_feat]
+    item_feat = [{item_mapper[k]: v for k, v in feat.items() if k in item_mapper} for feat in item_feat]
     return (ratings, *item_feat)
 
 
