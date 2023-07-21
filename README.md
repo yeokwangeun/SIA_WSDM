@@ -9,7 +9,7 @@ conda activate {env_name}
 
 2. Install the required packages usinng the 'requirements.txt' file:
 ```bash
-conda install - file requirements.txt
+conda install --file requirements.txt
 ```
 
 ## Dataset

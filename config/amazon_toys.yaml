@@ -1,6 +1,6 @@
 mode: train
 seed: 1234
-log_dir: amazon_toys
+exp_name: amazon_toys
 dataset: amazon_toys
 content: ['image', 'desc']
 batch_size: 128
