@@ -2,7 +2,6 @@ import os
 import pickle
 import pandas as pd
 import numpy as np
-import copy
 import random
 from tqdm import tqdm
 
@@ -15,9 +14,7 @@ def load_data(args, raw_dir, processed_dir, logger):
     pop_file = os.path.join(processed_dir, f"{args.dataset}_pop.pkl")
     if os.path.exists(inter_file) and os.path.exists(item_file) and os.path.exists(pop_file):
         logger.info("Preprocessing already done")
-        with open(inter_file, "rb") as inter_pf, open(item_file, "rb") as item_pf, open(
-            pop_file, "rb"
-        ) as pop_pf:
+        with open(inter_file, "rb") as inter_pf, open(item_file, "rb") as item_pf, open(pop_file, "rb") as pop_pf:
             inter = pickle.load(inter_pf)
             item = pickle.load(item_pf)
             pop = pickle.load(pop_pf)
@@ -27,15 +24,14 @@ def load_data(args, raw_dir, processed_dir, logger):
     raw_dir = os.path.join(raw_dir, args.dataset)
     ratings = pd.read_csv(os.path.join(raw_dir, f"ratings_{args.dataset}.csv"))
     if args.dataset == "ml-1m":
-        ratings = ratings[["user_id", "item_id", "rating"]]    
+        ratings = ratings[["user_id", "item_id", "rating"]]
     ratings.columns = ["user_id", "item_id", "timestamp"]
+
     item = []
     for content in args.content:
         with open(os.path.join(raw_dir, f"{args.dataset}_{content}_features.pkl"), "rb") as pf:
             feat = pickle.load(pf)
-            if content == "image" and not args.dataset.startswith("FROM_AMAZON"):
-                feat = {k: np.mean(v, axis=0) for k, v in feat.items()}
-            feat = {str(k): v for k, v in feat.items()}
+            feat = {k: (np.mean(v, axis=0) if content == "image" else v) for k, v in feat.items()}
             item.append(feat)
 
     logger.info("Mapping user_id and item_id to index")
@@ -46,20 +42,16 @@ def load_data(args, raw_dir, processed_dir, logger):
     pop = get_popularity(ratings)
 
     logger.info("Preprocessing done")
-    with open(inter_file, "wb") as inter_pf, open(item_file, "wb") as item_pf, open(
-        pop_file, "wb"
-    ) as pop_pf:
+    with open(inter_file, "wb") as inter_pf, open(item_file, "wb") as item_pf, open(pop_file, "wb") as pop_pf:
         pickle.dump(inter, inter_pf)
         pickle.dump(item, item_pf)
         pickle.dump(pop, pop_pf)
-
     return (inter, item, pop)
 
 
 def map_to_index(ratings, *item_feat):
     user_mapper = {str(uid): (i + 1) for i, uid in enumerate(ratings["user_id"].unique())}
     item_mapper = {str(iid): (i + 1) for i, iid in enumerate(ratings["item_id"].unique())}
-
     ratings["user_id"] = [user_mapper[str(uid)] for uid in ratings["user_id"]]
     ratings["item_id"] = [item_mapper[str(iid)] for iid in ratings["item_id"]]
     item_feat = [{item_mapper[k]: v for k, v in feat.items() if k in item_mapper} for feat in item_feat]
@@ -82,15 +74,7 @@ class TrainDataset:
     def __init__(self, inter, item_feats, pop, args, logger):
         self.df = pd.DataFrame({"items": [items[:-2] for items in inter["items"] if len(items[:-2]) > 1]})
         split_point = 2 if args.sequence_split else args.maxlen
-        self.df = pd.DataFrame(
-            {
-                "items": [
-                    seq[: i + 1]
-                    for seq in self.df["items"]
-                    for i in range(min(len(seq), split_point) - 1, len(seq))
-                ]
-            }
-        )
+        self.df = pd.DataFrame({"items": [seq[: i + 1] for seq in self.df["items"] for i in range(min(len(seq), split_point) - 1, len(seq))]})
         self.df["tmp"] = [" ".join([str(item) for item in items]) for items in self.df["items"]]
         self.df.drop_duplicates(subset=["tmp"], inplace=True)
         self.df["seq"] = [items[:-1] for items in self.df["items"]]
@@ -108,8 +92,8 @@ class TrainDataset:
     def __getitem__(self, idx):
         seq = np.array(self.df.iloc[idx, 0])
         next_item = self.df.iloc[idx, 1]
-        next_negs = np.array([i for i in random.choices(self.pop, k=self.n_neg + 3) if i != next_item][:self.n_neg])
-        
+        next_negs = np.array([i for i in random.choices(self.pop, k=self.n_neg + 3) if i != next_item][: self.n_neg])
+
         item_feats = []
         item_feats_pos = []
         item_feats_neg = []
@@ -165,12 +149,12 @@ class EvalDataset:
         pool = list(self.pop)
         pool.remove(next_item)
         if self.eval_mode == "full":
-            pass
+            raise NotImplementedError("Full evaluation mode is not implemented yet.")
         elif self.eval_mode == "uni":
             candidates = random.sample(pool, self.n_neg)
         elif self.eval_mode == "pop":
-            candidates = pool[:self.n_neg]
+            candidates = pool[: self.n_neg]
         else:
-            self.logger.error(f"Eval sampling mode in wrong form: {self.eval_mode}")
+            self.logger.error(f"Eval sampling mode in wrong form: {self.eval_mode}.")
             raise Exception
         return candidates

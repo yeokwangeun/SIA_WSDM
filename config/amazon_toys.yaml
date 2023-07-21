@@ -1,0 +1,33 @@
+mode: train
+seed: 1234
+log_dir: amazon_toys
+dataset: amazon_toys
+content: ['image', 'desc']
+batch_size: 128
+maxlen: 50
+sequence_split: True
+latent_dim: 32
+feature_dim: 32
+attn_dim_head: 32
+attn_num_heads: 2
+attn_depth: 2
+attn_self_per_cross: 2
+attn_dropout: 0.5
+attn_ff_dropout: 0.3
+attn_mode: masked
+out_token: cls
+latent_random: False
+latent_with_pos: False
+item_with_pos: True
+item_fusion_mode: mean
+num_epochs: 200
+lr: 0.001
+lr_warmup_step:
+lr_milestones:
+lr_gamma: 0.5
+weight_decay: 0.1
+early_stop: 10
+criterion: BCE
+n_negs_train: 1
+eval_sample_mode: uni
+eval_step: 1

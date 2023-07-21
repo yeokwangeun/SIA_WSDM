@@ -7,20 +7,18 @@ from torch import nn
 import nvidia_smi
 
 
-def get_item_embedding(
-    batch_y,
-    model,
-    mode
-):
+def get_item_embedding(batch_y, model, mode):
     item, item_feats = batch_y
     try:
         x = model.id_embedding(item).unsqueeze(1)
     except AttributeError:
+        # multi-gpu
         model = model.module
         x = model.id_embedding(item).unsqueeze(1)
-    if mode == "not":
+
+    if mode == "pure":
         return x.squeeze(1)
-    
+
     item_feat = []
     item_feats.append(item)
     for item_feat_list, feat_embedding in zip(item_feats, model.feat_embeddings):
@@ -31,7 +29,7 @@ def get_item_embedding(
         x = model.cross_attn(x, context=item_feat) + x
         x = model.cross_ff(x) + x
     elif mode == "mean":
-        x = torch.cat([x, item_feat], axis=1).mean(axis=1, keepdim=True)        
+        x = torch.cat([x, item_feat], axis=1).mean(axis=1, keepdim=True)
     return x.squeeze(1)
 
 
@@ -50,7 +48,6 @@ def train(
     log_dir,
     device,
     item_fusion_mode,
-    one_to_one_loss,
     eval_step,
 ):
     nvidia_smi.nvmlInit()
@@ -62,7 +59,7 @@ def train(
     logger.info(f"Training starts - {num_epochs} epochs")
     if criterion == "BCE":
         loss_fn = nn.BCEWithLogitsLoss()
-    else:
+    elif criterion == "CL":
         loss_fn = ContrastiveLoss(train_loader.batch_size)
     for e in range(start_epoch, start_epoch + num_epochs):
         epoch_loss = 0.0
@@ -70,32 +67,29 @@ def train(
         scheduler.step()
         for batch_x, batch_y_pos, batch_y_negs in train_loader:
             optimizer.zero_grad()
-            x_out_list = model(batch_x)
-            if not one_to_one_loss:
-                x_out_list = x_out_list[-1:]
+            x_out = model(batch_x)[-1]
             y_pos_out = get_item_embedding(batch_y_pos, model, item_fusion_mode)
-            loss = 0
-            for x_out in x_out_list:
-                if criterion == "BCE":
-                    items, i_feats = batch_y_negs
-                    batch_size, n_negs = items.shape
-                    items = rearrange(items, "b n -> (b n)")
-                    i_feats = [rearrange(i_feat, "b n d -> (b n) d") for i_feat in i_feats]
-                    y_negs_out = get_item_embedding((items, i_feats), model, item_fusion_mode)
-                    x_out_extended = rearrange(repeat(x_out.unsqueeze(1), "b 1 d -> b n d", n=n_negs), "b n d -> (b n) d")
-                    neg_score = torch.diag(x_out_extended @ y_negs_out.T)
-                    neg_score = rearrange(neg_score, "(b n) -> b n", b=batch_size)
-                    neg_label = torch.zeros(neg_score.shape).to(device).float()
+            loss = 0.0
+            if criterion == "BCE":
+                items, i_feats = batch_y_negs
+                batch_size, n_negs = items.shape
+                items = rearrange(items, "b n -> (b n)")
+                i_feats = [rearrange(i_feat, "b n d -> (b n) d") for i_feat in i_feats]
+                y_negs_out = get_item_embedding((items, i_feats), model, item_fusion_mode)
+                x_out_extended = rearrange(repeat(x_out.unsqueeze(1), "b 1 d -> b n d", n=n_negs), "b n d -> (b n) d")
+                neg_score = torch.diag(x_out_extended @ y_negs_out.T)
+                neg_score = rearrange(neg_score, "(b n) -> b n", b=batch_size)
+                neg_label = torch.zeros(neg_score.shape).to(device).float()
 
-                    pos_score = torch.diag(x_out @ y_pos_out.T)
-                    pos_score = rearrange(pos_score, "(b n) -> b n", b=batch_size)
-                    pos_label = torch.ones(pos_score.shape).to(device).float()
+                pos_score = torch.diag(x_out @ y_pos_out.T)
+                pos_score = rearrange(pos_score, "(b n) -> b n", b=batch_size)
+                pos_label = torch.ones(pos_score.shape).to(device).float()
 
-                    logits = torch.cat([pos_score, neg_score], axis=1)
-                    label = torch.cat([pos_label, neg_label], axis=1)
-                    loss += loss_fn(logits, label)
-                else:
-                    loss += loss_fn(x_out, y_pos_out)
+                logits = torch.cat([pos_score, neg_score], axis=1)
+                label = torch.cat([pos_label, neg_label], axis=1)
+                loss += loss_fn(logits, label)
+            elif criterion == "CL":
+                loss += loss_fn(x_out, y_pos_out)
             loss.backward()
             epoch_loss += loss.item()
             optimizer.step()
@@ -103,8 +97,8 @@ def train(
             for i in range(device_cnt):
                 handle = nvidia_smi.nvmlDeviceGetHandleByIndex(i)
                 info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
-                used = info.used / (1024 ** 3)
-                total = info.total / (1024 ** 3)
+                used = info.used / (1024**3)
+                total = info.total / (1024**3)
                 gpu_mem_log += f"Device{i} - {used:.2f}G/{total:.2f}G "
             train_loader.set_description(f"Epoch {e} - Loss: {loss.item():.4f}. GPU MEM: {gpu_mem_log}")
         current_lr = optimizer.param_groups[0]["lr"]
@@ -118,6 +112,7 @@ def train(
             "scheduler_state_dict": scheduler.state_dict(),
         }
         save_model(log_dir, save_dict)
+
         if (e + 1) % eval_step == 0:
             val_metrics = evaluate(model, val_loader, item_fusion_mode, criterion=criterion, loss_fn=loss_fn)
             val_log = ""
@@ -133,7 +128,7 @@ def train(
                 save_model(best_save_dir, save_dict)
             else:
                 patience += 1
-                if patience >= early_stop:
+                if early_stop and patience >= early_stop:
                     logger.info(f"Early stopping at epoch {e}")
                     break
 
@@ -248,12 +243,12 @@ class ContrastiveLoss(nn.Module):
         self.neg_mask = self.get_neg_mask(batch_size)
         self.sim_f = nn.CosineSimilarity(dim=2)
         self.criterion = nn.CrossEntropyLoss(reduction="sum")
-    
+
     def get_neg_mask(self, batch_size):
         neg_mask = torch.ones((batch_size, batch_size), dtype=bool)
         neg_mask.fill_diagonal_(0)
         return neg_mask
-    
+
     def forward(self, seq_out, item_out):
         batch_size = seq_out.shape[0]
         sim = self.sim_f(seq_out.unsqueeze(1), item_out.unsqueeze(0)) / self.temp

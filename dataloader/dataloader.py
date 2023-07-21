@@ -33,7 +33,7 @@ class DataLoaderHandler:
 
     def get_dataloader(self):
         return self.dataloader
-    
+
     def collate_fn(self, sample):
         x_seq, x_p, y_pos, y_neg = [], [], [], []
         x_item_feats = [[] for _ in range(len(self.dataset.item_feats))]
@@ -74,12 +74,9 @@ class DataLoaderHandler:
             padded2d = padded[:, np.newaxis]
             seq = np.append(padded, np.array(seq))
             pos = np.append(padded, np.array(pos))
-            i_feats = [
-                np.concatenate([np.repeat(padded2d, i_feat.shape[1], axis=1), i_feat], axis=0)
-                for i_feat in i_feats
-            ]
-        seq = np.append(seq, self.num_items + 1) # CLS token
-        pos = np.append(pos, pos[-1] + 1) # CLS token
+            i_feats = [np.concatenate([np.repeat(padded2d, i_feat.shape[1], axis=1), i_feat], axis=0) for i_feat in i_feats]
+        seq = np.append(seq, self.num_items + 1)  # CLS token
+        pos = np.append(pos, pos[-1] + 1)  # CLS token
         seq = torch.tensor(seq, dtype=torch.long)
         pos = torch.tensor(pos, dtype=torch.long)
         i_feats = [torch.tensor(i_feat, dtype=torch.float) for i_feat in i_feats]

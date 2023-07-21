@@ -52,9 +52,7 @@ class FeedForward(nn.Module):
 
     def __init__(self, dim, mult=2, dropout=0.0):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(dim, dim * mult * 2), GEGLU(), nn.Linear(dim * mult, dim), nn.Dropout(dropout)
-        )
+        self.net = nn.Sequential(nn.Linear(dim, dim * mult * 2), GEGLU(), nn.Linear(dim * mult, dim), nn.Dropout(dropout))
 
     def forward(self, x):
         return self.net(x)
