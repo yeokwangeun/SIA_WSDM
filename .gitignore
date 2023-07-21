@@ -3,7 +3,6 @@ slurm_log
 dataset/raw
 dataset/processed
 *__pycache__*
+*ipynb
 saved
-reserve*.sh
-reserve.log
 submit.sh
