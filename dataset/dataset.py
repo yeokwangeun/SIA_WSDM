@@ -31,7 +31,7 @@ def load_data(args, raw_dir, processed_dir, logger):
     for content in args.content:
         with open(os.path.join(raw_dir, f"{args.dataset}_{content}_features.pkl"), "rb") as pf:
             feat = pickle.load(pf)
-            feat = {k: (np.mean(v, axis=0) if content == "image" else v) for k, v in feat.items()}
+            feat = {str(k): (np.mean(v, axis=0) if content == "image" else v) for k, v in feat.items()}
             item.append(feat)
 
     logger.info("Mapping user_id and item_id to index")
