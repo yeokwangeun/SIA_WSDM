@@ -1,6 +1,4 @@
-mode: train
 seed: 1234
-exp_name: amazon_beauty
 dataset: amazon_beauty
 content: ['image', 'desc']
 batch_size: 128

@@ -41,6 +41,12 @@ python main.py --help
 
 To use the best hyperparameters for each dataset, run the main.py script using the provided YAML file. Here's an example of how to use it for the amazon_beauty dataset:
 
+- train
 ```bash
-python main.py --config_file config/amazon_beauty.yaml
+python main.py --exp_name my_exp_train --config_file config/amazon_beauty.yaml
+```
+
+- test
+```bash
+python main.py --mode test --exp_name my_exp_test --config_file config/amazon_beauty.yaml --saved_model_path log/amazon_beauty/my_exp_train/best/model.pt
 ```
