@@ -116,7 +116,7 @@ def main():
         model = model.to(args.device)
 
     logger.info("Evaluation starts")
-    test_metrics = evaluate(model, test_loader, args.item_fusion_mode)
+    test_metrics = evaluate(model, test_loader, args.item_fusion_mode, analysis_path=args.analysis_path)
     test_log = ""
     for k, v in test_metrics.items():
         test_log += f"{k}: {v:.5f} "
@@ -156,6 +156,7 @@ def parse_arguments():
         help="Comma-separated list of GPU device indices to be used for distributed training or multiple GPUs. By default, it uses all available GPUs.",
     )
     parser.add_argument("--saved_model_path", type=str, default=None, help="Path to a pre-trained model for testing.")
+    parser.add_argument("--analysis_path", type=str, default=None, help="Path to evaluation results for analysis.")
 
     #################### DATA ####################
     parser.add_argument("--dataset", type=str, default="amazon_beauty", choices=["amazon_beauty", "amazon_sports", "amazon_toys", "ml-1m"], help="Specifies the dataset to use.")

@@ -1,10 +1,12 @@
 import os
 import torch
 import itertools
+import pickle
+import nvidia_smi
 from tqdm import tqdm
 from einops import rearrange, repeat
 from torch import nn
-import nvidia_smi
+from collections import defaultdict
 
 
 def get_item_embedding(batch_y, model, mode):
@@ -144,11 +146,13 @@ def evaluate(
     item_fusion_mode,
     criterion=None,
     loss_fn=None,
+    analysis_path=None,
 ):
     model.eval()
     num_users = len(dataloader.dataset)
     dataloader = tqdm(dataloader)
     metrics_handler = MetricsHandler(num_users=num_users)
+    analysis = defaultdict(list)
     with torch.no_grad():
         for batch_x, batch_y_pos, batch_y_negs in dataloader:
             x_out = model(batch_x)[-1]
@@ -167,7 +171,7 @@ def evaluate(
             scores = torch.cat([pos_score, neg_score], axis=1)
             scores = scores.detach().cpu()
             labels = torch.cat([torch.ones(pos_score.shape), torch.zeros(neg_score.shape)], axis=1)
-            metrics = calculate_metrics(scores, labels, k_list=[1, 5, 10, 20])
+            metrics, metrics_batch = calculate_metrics(scores, labels, k_list=[1, 5, 10, 20])
             if criterion == "BCE":
                 loss = loss_fn(scores, labels)
                 metrics["Loss"] = loss.item()
@@ -175,25 +179,41 @@ def evaluate(
                 loss = loss_fn(x_out, y_pos_out)
                 metrics["Loss"] = loss.item()
             metrics_handler.append_metrics(metrics)
+
+            if analysis_path:
+                analysis["seq"].append(batch_x[0].cpu())
+                analysis["seqlen"].append(batch_x[1][:, -1].cpu())
+                analysis["target"].append(batch_y_pos[0].cpu())
+                for k, v in metrics_batch.items():
+                    analysis[k].append(v)
+
+    if analysis_path:
+        for k, v in analysis.items():
+            analysis[k] = torch.cat(v, dim=0)
+        with open(analysis_path, "wb") as pf:
+            pickle.dump(analysis, pf)
     return metrics_handler.get_metrics()
 
 
 def calculate_metrics(scores, labels, k_list=[1, 5, 10, 20]):
     metrics = [f"{metric}@{k}" for metric, k in itertools.product(["NDCG", "HR"], k_list)]
     metrics_sum = {metric: 0.0 for metric in metrics}
+    metrics_batch = {metric: None for metric in metrics}
     rank = (-scores).argsort(dim=1)
     labels_float = labels.float()
     for k in k_list:
         cut = rank[:, :k]
         hits = labels_float.gather(dim=1, index=cut)
         metrics_sum[f"HR@{k}"] = hits.sum().item()
+        metrics_batch[f"HR@{k}"] = hits.sum(dim=1)
 
         position = torch.arange(2, 2 + k)
         weights = 1 / torch.log2(position.float())
         dcg = hits * weights
         metrics_sum[f"NDCG@{k}"] = dcg.sum().item()
+        metrics_batch[f"NDCG@{k}"] = dcg.sum(dim=1)
 
-    return metrics_sum
+    return (metrics_sum, metrics_batch)
 
 
 def save_model(save_dir, save_dict):
