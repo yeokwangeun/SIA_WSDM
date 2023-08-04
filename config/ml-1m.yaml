@@ -1,0 +1,30 @@
+seed: 1234
+dataset: ml-1m
+content: ['image', 'desc']
+batch_size: 128
+maxlen: 200
+sequence_split: True
+latent_dim: 128
+feature_dim: 128
+attn_dim_head: 128
+attn_num_heads: 4
+attn_depth: 4
+attn_self_per_cross: 1
+attn_dropout: 0.2
+attn_ff_dropout: 0.2
+attn_mode: masked
+latent_random: False
+latent_with_pos: False
+item_with_pos: True
+item_fusion_mode: mean
+num_epochs: 200
+lr: 0.001
+lr_warmup_step:
+lr_milestones:
+lr_gamma: 0.5
+weight_decay: 0.01
+early_stop: 10
+criterion: BCE
+n_negs_train: 1
+eval_sample_mode: uni
+eval_step: 1
