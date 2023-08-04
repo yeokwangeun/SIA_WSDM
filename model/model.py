@@ -10,7 +10,6 @@ class SIA(nn.Module):
     def __init__(
         self,
         attn_mode,
-        out_token,
         latent_dim,
         feature_dim,
         attn_num_heads,
@@ -30,7 +29,6 @@ class SIA(nn.Module):
         """
         Args:
           - attn_mode: Attention mode for cross attention.
-          - out_token: Representation token of the sequence.
           - latent_dim: Dimension of a latent vector.
           - feature_dim: Dimension of features.
           - attn_num_heads: Number of heads for attention operation in the iterative attention.
@@ -50,15 +48,14 @@ class SIA(nn.Module):
         super().__init__()
         self.latent_dim = latent_dim
         self.device = device
-        self.out_token = out_token
         self.attn_mode = attn_mode
         self.id_embedding = nn.Embedding(
-            num_embeddings=(num_items + 2),  # 1~num_items+1
+            num_embeddings=(num_items + 1),  # 1~num_items
             embedding_dim=latent_dim,
             padding_idx=0,
         )
         self.pos_embedding = nn.Embedding(
-            num_embeddings=(maxlen + 2),  # 1~maxlen+1
+            num_embeddings=(maxlen + 1),  # 1~maxlen
             embedding_dim=latent_dim,
             padding_idx=0,
         )
@@ -128,47 +125,42 @@ class SIA(nn.Module):
 
     def forward(self, batch_x):
         # ID sequences -> embedded latent vectors (x)
-        seq_list, pos_list, item_feat_lists = batch_x
-        batch_size, seqlen = seq_list.shape
-        seqlen -= 1  # cls token
-        id_emb = self.id_embedding(seq_list)
-        pos_emb = self.pos_embedding(pos_list)
+        seq, pos, item_feats = batch_x
+        batch_size, seqlen = seq.shape
+        id_emb = self.id_embedding(seq)
+        pos_emb = self.pos_embedding(pos)
         x = repeat(self.latent, "1 l d -> b l d", b=batch_size) if self.latent_random else id_emb
         x = (x + pos_emb) if self.latent_with_pos else x
 
         # Item features -> concatenated item features (item_feat)
-        item_feat = []
-        pos_items = []
-        mask_items = []
-        item_feat_lists.append(seq_list[:, :-1])  # append id attributes
-        for item_feat_list, feat_embedding in zip(item_feat_lists, self.feat_embeddings):
-            item_feat.append(feat_embedding(item_feat_list))
-            pos_items.append(pos_list[:, :-1])
-            if self.attn_mode == "full":
-                mask_items.append(torch.diag_embed(pos_list)[:, :, :-1])
-            elif self.attn_mode == "masked":
-                mask_items.append((repeat(pos_list, "b n -> b m n", m=pos_list.shape[-1]) * repeat(pos_list, "b n -> b n m", m=pos_list.shape[-1])).tril()[:, :, :-1])
-        item_feat = torch.cat(item_feat, axis=1)
-        pos_items = torch.cat(pos_items, axis=1)
-        item_pos_emb = self.item_pos_embedding(pos_items)
-        item_feat = (item_feat + item_pos_emb) if self.item_with_pos else item_feat
+        item_feats.append(seq)
+        feat_embs = [
+            feat_embedding(item_feat)
+            for item_feat, feat_embedding
+            in zip(item_feats, self.feat_embeddings)
+        ]
+        feat_emb = torch.cat(feat_embs, dim=1)
+        item_pos_emb = self.item_pos_embedding(pos.repeat(1, len(feat_embs)))
+        feat_emb = (feat_emb + item_pos_emb) if self.item_with_pos else feat_emb
 
         # Masks for Attention
-        mask_latent = pos_list.unsqueeze(2).to(self.device)
-        mask_self_attn = einsum("b i d, b j d -> b i j", mask_latent, mask_latent) > 0
-        mask_cross_attn = torch.cat(mask_items, axis=2) > 0
+        pad_mask = einsum("b i d, b j d -> b i j", pos.unsqueeze(2), pos.unsqueeze(2))
+        time_mask = repeat(pos, "b n -> b m n", m=pos.shape[-1]) * repeat(pos, "b n -> b n m", m=pos.shape[-1]).tril()
+        mask = (pad_mask * time_mask) if self.attn_mode == "masked" else pad_mask
+        item_mask = mask.repeat(1, 1, len(feat_embs))
+        mask = (mask > 0).to(self.device)
+        item_mask = (item_mask > 0).to(self.device)
 
         # Iterative Attention
         out = []
-        out_idx = -1 if self.out_token == "cls" else -2
         for cross_attn, cross_ff, self_attns in self.layers:
-            x = cross_attn(x, context=item_feat, mask=mask_cross_attn) + x
+            x = cross_attn(x, context=feat_emb, mask=item_mask) + x
             x = cross_ff(x) + x
 
             for self_attn, self_ff in self_attns:
-                x = self_attn(x, mask=mask_self_attn) + x
+                x = self_attn(x, mask=mask) + x
                 x = self_ff(x) + x
 
-            out.append(self.out_ln(x[:, out_idx, :]))
+            out.append(self.out_ln(x[:, -1, :]))
 
         return out

@@ -24,7 +24,9 @@ def load_data(args, raw_dir, processed_dir, logger):
     raw_dir = os.path.join(raw_dir, args.dataset)
     ratings = pd.read_csv(os.path.join(raw_dir, f"ratings_{args.dataset}.csv"))
     if args.dataset == "ml-1m":
-        ratings = ratings[["user_id", "item_id", "rating"]]
+        ratings = ratings[["user_id", "item_id", "timestamp"]]
+    elif args.dataset.startswith("amazon"):
+        ratings = ratings[["reviewerID", "asin", "unixReviewTime"]]        
     ratings.columns = ["user_id", "item_id", "timestamp"]
 
     item = []

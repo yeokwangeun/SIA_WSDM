@@ -51,7 +51,6 @@ def main():
     logger.info("Loading Model")
     model = SIA(
         attn_mode=args.attn_mode,
-        out_token=args.out_token,
         latent_dim=args.latent_dim,
         feature_dim=args.feature_dim,
         attn_num_heads=args.attn_num_heads,
@@ -180,9 +179,6 @@ def parse_arguments():
     parser.add_argument("--attn_dropout", type=float, default=0.2, help="Dropout rate for attention layers.")
     parser.add_argument("--attn_ff_dropout", type=float, default=0.2, help="Dropout rate for feed-forward layers in the attention mechanism.")
     parser.add_argument("--attn_mode", type=str, default="masked", choices=["full", "masked"], help="Type of attention used, either 'full' for full attention or 'masked' for masked attention.")
-    parser.add_argument(
-        "--out_token", type=str, default="cls", choices=["cls", "last"], help="Type of output token to use, either 'cls' for the class token or 'last' for the last token in the sequence."
-    )
     parser.add_argument("--latent_random", type=str2bool, default="No", help="Whether to initialize the latent space randomly. 'No' means using id embedding for latent vector.")
     parser.add_argument("--latent_with_pos", type=str2bool, default="Yes", help="Whether to include positional encoding in the latent space.")
     parser.add_argument("--item_with_pos", type=str2bool, default="Yes", help="Whether to include positional encoding in the item features.")
