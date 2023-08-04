@@ -1,10 +1,10 @@
 #!/bin/bash
 
 declare -A DOWNLOAD_ID=(
-  ["amazon_beauty"]="1UkiMJ0h0LvbRiey-M3SQdEat1sF81ltO"
-  ["amazon_sports"]="1utShT3zVmchz1OYgeSp-wO5dU_iLMDc4"
-  ["amazon_toys"]="1AI6FWMkPnWSDXGFSyYBkTeH5qSUMtIIX"
-  ["ml-1m"]="1i49fid3ZlEm1PPcjxnIASzUnnzXzMwq_"
+  ["amazon_beauty"]="1OTM6RRN_tcxyK6k_QSzvpJvUOJiMfe2S"
+  ["amazon_sports"]="1st_N6WECJZiVAoh6EMdYZedA18K7B67c"
+  ["amazon_toys"]="1jS0zOKRszUE0udqjGJU-8DjmO97Bwh6H"
+  ["ml-1m"]="1f5YurvRT138gndQ6OxSuEefhXSOlUotc"
 )
 
 if [ $# -eq 0 ]; then
@@ -13,7 +13,8 @@ if [ $# -eq 0 ]; then
 fi
 
 if [ -z "${DOWNLOAD_ID[$1]}" ]; then
-  echo "ERROR!"
+  echo "Error: Please provide an argument: "${!DOWNLOAD_ID[@]}""
+  exit 1
 fi
 
 echo "Download '$1'"
