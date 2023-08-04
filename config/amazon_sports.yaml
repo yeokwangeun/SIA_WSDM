@@ -13,7 +13,6 @@ attn_self_per_cross: 2
 attn_dropout: 0.5
 attn_ff_dropout: 0.3
 attn_mode: masked
-out_token: cls
 latent_random: False
 latent_with_pos: False
 item_with_pos: True
