@@ -117,7 +117,7 @@ class SIA(nn.Module):
                 )
             )
         self.out_ln = nn.LayerNorm(latent_dim)
-        self.latent = nn.Parameter(torch.Tensor(1, maxlen + 1, latent_dim))
+        self.latent = nn.Parameter(torch.Tensor(1, maxlen, latent_dim))
         nn.init.xavier_uniform_(self.latent)
         self.latent_random = latent_random
         self.latent_with_pos = latent_with_pos

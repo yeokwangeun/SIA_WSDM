@@ -121,7 +121,7 @@ def main():
         test_log += f"{k}: {v:.5f} "
     logger.info(f"Test - {test_log}")
     if args.mode == "train":
-        writer.add_hparams(hparam_dict={"log_dir": args.log_dir}, metric_dict={k: v for k, v in test_metrics.items() if k != "NDCG@1"})
+        writer.add_hparams(hparam_dict={"log_dir": log_dir}, metric_dict={k: v for k, v in test_metrics.items() if k != "NDCG@1"})
         writer.flush()
         writer.close()
     nvidia_smi.nvmlShutdown()
